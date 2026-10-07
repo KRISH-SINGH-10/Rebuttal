@@ -1,0 +1,71 @@
+{
+  "key": "JK-1071-d8834c6bf2e1",
+  "dispute_id": "PP-D-27803",
+  "saved_at": "2026-10-07T16:15:25.710Z",
+  "model": "gemini:gemini-3.5-flash-lite",
+  "recommendation": {
+    "decision": "FIGHT",
+    "win_probability": 0.98,
+    "headline": "Fight this unauthorized chargeback using proof of delivery with signature and direct customer messages confirming receipt.",
+    "rationale": "The buyer claims the transaction was unauthorized, but our records show a clear prior purchase history from the same PayPal account and shipping address. Furthermore, the buyer messaged us directly on September 8 to request gift wrapping for this exact order and on September 13 to confirm delivery (\"It arrived and it's gorgeous, thank you!\"). USPS tracking and signature confirmation also show delivery to the buyer's address on September 12, signed by E ORTIZ. We have exceptionally strong proof that this was a legitimate, authorized transaction.",
+    "evidence": [
+      {
+        "type": "PROOF_OF_FULFILLMENT",
+        "summary": "Customer messaged on Sept 8, 2026 ordering the tall vase to match bowls bought in spring and thanking the seller upon arrival on Sept 13, 2026.",
+        "source": "get_store_records"
+      },
+      {
+        "type": "PROOF_OF_DELIVERY_SIGNATURE",
+        "summary": "USPS delivered the package to 9 Harbor Rd, Portland, ME on Sept 12, 2026, signed by E ORTIZ.",
+        "source": "get_store_records"
+      },
+      {
+        "type": "PROOF_OF_RECEIPT_COPY",
+        "summary": "Buyer Ellen Ortiz (account QX7BUYER1071) has a prior purchase history with the shop, shipping to the exact same address (9 Harbor Rd, Portland, ME).",
+        "source": "list_transactions"
+      }
+    ],
+    "response_to_paypal": "This transaction was fully authorized and received by the cardholder. The buyer, Ellen Ortiz, has a established purchase history with our shop using this exact PayPal account and shipping address (9 Harbor Rd, Portland, ME). Additionally, the buyer messaged our shop directly on September 8, 2026, requesting gift wrapping for this specific order (\"Ordering the tall vase to go with the bowls I bought in spring. Can you gift wrap it?\"), and again on September 13, 2026, confirming delivery (\"It arrived and it's gorgeous, thank you!\"). Furthermore, USPS tracking (9405511899223847561044) confirms the item was delivered to the shipping address on September 12, 2026, and signed for by E ORTIZ. We respectfully request that this chargeback be closed in the seller's favor.",
+    "tracking_carrier": "USPS",
+    "tracking_number": "9405511899223847561044",
+    "offer_amount": 0,
+    "offer_type": "NONE",
+    "risks": [
+      "Bank chargebacks can occasionally be unpredictable depending on the issuing bank's cardholder protection policies, despite overwhelming merchant evidence."
+    ]
+  },
+  "trace": [
+    {
+      "kind": "tool",
+      "tool": "get_dispute",
+      "input": {
+        "dispute_id": "PP-D-27803"
+      },
+      "summary": "Dispute PP-D-27803: unauthorised, $142.00, chargeback",
+      "at": "2026-10-07T16:15:23.520Z"
+    },
+    {
+      "kind": "tool",
+      "tool": "get_store_records",
+      "input": {
+        "invoice_id": "JK-1071"
+      },
+      "summary": "Shop records: 3 customer messages; last scan \"Delivered, signed by E ORTIZ\"",
+      "at": "2026-10-07T16:15:23.521Z"
+    },
+    {
+      "kind": "tool",
+      "tool": "list_transactions",
+      "input": {
+        "transaction_id": "WQS4G0JANUCSQWS8Q"
+      },
+      "summary": "5 transactions from this buyer",
+      "at": "2026-10-07T16:15:23.521Z"
+    },
+    {
+      "kind": "note",
+      "summary": "Recommendation: FIGHT",
+      "at": "2026-10-07T16:15:25.710Z"
+    }
+  ]
+}

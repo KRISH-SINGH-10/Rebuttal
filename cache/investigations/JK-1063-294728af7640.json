@@ -1,0 +1,85 @@
+{
+  "key": "JK-1063-294728af7640",
+  "dispute_id": "PP-D-27802",
+  "saved_at": "2026-10-07T16:15:22.735Z",
+  "model": "gemini:gemini-3.5-flash-lite",
+  "recommendation": {
+    "decision": "REFUND",
+    "win_probability": 0,
+    "headline": "Accept the dispute and issue a full refund because the order was shipped without tracking and cannot be proven as delivered.",
+    "rationale": "The buyer never received the item and opened an item-not-received dispute. Because the item was shipped via USPS First-Class letter without tracking, we have no proof of delivery or receipt to contest the claim. Fighting this dispute would be futile, so issuing a full refund immediately resolves the issue and saves seller time.",
+    "evidence": [
+      {
+        "type": "OTHER",
+        "summary": "Dispute PP-D-27802 was opened by Marcus Lee for $28.00 due to merchandise not received.",
+        "source": "get_dispute"
+      },
+      {
+        "type": "PROOF_OF_FULFILLMENT",
+        "summary": "The order was shipped via USPS First-Class letter with no tracking number and no carrier events.",
+        "source": "get_store_records"
+      }
+    ],
+    "response_to_paypal": "We are issuing a full refund to the buyer as this low-value order was shipped via USPS First-Class letter without tracking.",
+    "tracking_carrier": "",
+    "tracking_number": "",
+    "offer_amount": 0,
+    "offer_type": "NONE",
+    "risks": [
+      "None"
+    ]
+  },
+  "trace": [
+    {
+      "kind": "tool",
+      "tool": "get_dispute",
+      "input": {
+        "dispute_id": "PP-D-27802"
+      },
+      "summary": "Dispute PP-D-27802: merchandise or service not received, $28.00, inquiry",
+      "at": "2026-10-07T16:15:19.890Z"
+    },
+    {
+      "kind": "tool",
+      "tool": "get_store_records",
+      "input": {
+        "invoice_id": "JK-1063"
+      },
+      "summary": "Shop records: 0 customer messages; no carrier scans",
+      "at": "2026-10-07T16:15:19.891Z"
+    },
+    {
+      "kind": "tool",
+      "tool": "get_order",
+      "input": {
+        "id": "SC44CSLQU2JQEJAYQ"
+      },
+      "summary": "Order SC44CSLQU2JQEJAYQ: Risograph print 'River at Dusk', A4, ships to Seattle, WA",
+      "at": "2026-10-07T16:15:20.522Z"
+    },
+    {
+      "kind": "tool",
+      "tool": "list_transactions",
+      "input": {
+        "transaction_id": "YYC2UA6L88AG4GCJC"
+      },
+      "summary": "1 transaction from this buyer",
+      "at": "2026-10-07T16:15:20.522Z"
+    },
+    {
+      "kind": "tool",
+      "tool": "get_shipment_tracking",
+      "input": {
+        "transaction_id": "YYC2UA6L88AG4GCJC",
+        "order_id": "SC44CSLQU2JQEJAYQ"
+      },
+      "summary": "No tracking on file with PayPal",
+      "at": "2026-10-07T16:15:21.264Z"
+    },
+    {
+      "kind": "note",
+      "summary": "Recommendation: REFUND",
+      "at": "2026-10-07T16:15:22.735Z"
+    }
+  ]
+}

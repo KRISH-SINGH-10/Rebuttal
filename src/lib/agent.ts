@@ -82,6 +82,12 @@ const RecommendationSchema = z.object({
   offer_amount: z.number().min(0),
   offer_type: z.enum(["REFUND", "REFUND_WITH_RETURN", "NONE"]),
   risks: z.array(z.string()),
+}).superRefine((r, ctx) => {
+  // Seen live with Gemini flash-lite: OFFER with offer_amount 0 / offer_type NONE, which
+  // would send PayPal an empty offer. Send it back to the model instead.
+  if (r.decision === "OFFER" && (r.offer_amount <= 0 || r.offer_type === "NONE")) {
+    ctx.addIssue({ code: "custom", path: ["offer_amount"], message: "decision OFFER needs offer_amount above 0 and offer_type REFUND or REFUND_WITH_RETURN" });
+  }
 });
 
 export type AnalyzeOptions = {
@@ -130,6 +136,11 @@ export async function analyzeDispute(dispute: Dispute, opts: AnalyzeOptions = {}
       const reply = (content: string, isError?: boolean) => results.push({ id: use.id, name: use.name, content, ...(isError ? { isError } : {}) });
       if (use.name === SUBMIT_TOOL.name) {
         const parsed = RecommendationSchema.safeParse(input);
+        const disputed = Number(dispute.dispute_amount?.value ?? Infinity);
+        if (parsed.success && parsed.data.decision === "OFFER" && parsed.data.offer_amount >= disputed) {
+          reply(`Invalid recommendation: offer_amount ${parsed.data.offer_amount} must be below the disputed amount ${disputed}. For a full refund choose REFUND.`, true);
+          continue;
+        }
         if (parsed.success) {
           step({ kind: "note", summary: `Recommendation: ${parsed.data.decision}` });
           return { recommendation: parsed.data, trace, model: `${model.provider}:${model.model}` };

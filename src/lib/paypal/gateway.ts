@@ -28,7 +28,7 @@ export interface PayPalGateway {
   acceptClaim(id: string, note: string): Promise<void>;
   // Makes sure PayPal has the carrier tracking on the disputed transaction before we
   // fight: PayPal's item-not-received decisions lean heavily on it.
-  addTracking(transactionId: string, t: { carrier: string; tracking_number: string }): Promise<"added" | "exists">;
+  addTracking(transactionId: string, t: { carrier: string; tracking_number: string }, orderId?: string | null): Promise<"added" | "exists">;
 
   // Checks a webhook delivery really came from PayPal.
   verifyWebhook(headers: Headers, event: unknown): Promise<boolean>;

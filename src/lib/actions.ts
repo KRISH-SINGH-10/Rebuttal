@@ -30,7 +30,8 @@ export async function approve(caseId: string, a: Approval): Promise<CaseRecord> 
       // Best effort: the evidence below carries the tracking too, so a failure here
       // shouldn't block the response.
       try {
-        const res = await gw.addTracking(txnId, tracking);
+        const invoice = c.dispute.disputed_transactions[0]?.invoice_number;
+        const res = await gw.addTracking(txnId, tracking, invoice ? await gw.orderIdForInvoice(invoice) : null);
         if (res === "added") note(caseId, `Added ${tracking.carrier} tracking ${tracking.tracking_number} to the PayPal transaction.`);
       } catch (e) {
         note(caseId, `Could not add tracking to the PayPal transaction: ${e instanceof Error ? e.message : e}`, "error");

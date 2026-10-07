@@ -104,11 +104,18 @@ export function sandboxGateway(clientId: string, clientSecret: string): PayPalGa
       }
     },
 
-    async addTracking(transactionId, t) {
+    async addTracking(transactionId, t, orderId) {
       const existing = await toolkit("get_shipment_tracking", { transaction_id: transactionId }).catch(() => null);
       const trackers: Array<{ tracking_number?: string }> = existing?.trackers ?? [];
       if (trackers.some((x) => x.tracking_number === t.tracking_number)) return "exists";
-      await toolkit("create_shipment_tracking", { transaction_id: transactionId, tracking_number: t.tracking_number, carrier: t.carrier, status: "SHIPPED" });
+      try {
+        await toolkit("create_shipment_tracking", { transaction_id: transactionId, tracking_number: t.tracking_number, carrier: t.carrier, status: "SHIPPED" });
+      } catch (e) {
+        // The toolkit uses the older trackers API, which apps without the "Add tracking"
+        // feature get a 403 from. Orders v2 /track works for any app that took the payment.
+        if (!orderId) throw e;
+        await call("POST", `/v2/checkout/orders/${orderId}/track`, { capture_id: transactionId, tracking_number: t.tracking_number, carrier: t.carrier, notify_payer: false });
+      }
       return "added";
     },
 

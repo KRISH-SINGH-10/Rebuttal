@@ -108,7 +108,8 @@ async function capture(wait) {
       console.log(`${p.key}: captured ${cap.id} (${cap.status}), invoice ${p.invoice}`);
       const t = ORDERS[p.key].tracking;
       if (t) {
-        await api(tok, "POST", "/v1/shipping/trackers-batch", { trackers: [{ transaction_id: cap.id, tracking_number: t.tracking_number, carrier: t.carrier, status: t.status }] })
+        // Orders v2 /track: the older /v1/shipping/trackers-batch needs an app feature the default app lacks (403).
+        await api(tok, "POST", `/v2/checkout/orders/${orderId}/track`, { capture_id: cap.id, tracking_number: t.tracking_number, carrier: t.carrier, notify_payer: false })
           .then(() => console.log(`  tracking ${t.carrier} ${t.tracking_number} added`))
           .catch((e) => console.log(`  tracking not added: ${e.message}`));
       }

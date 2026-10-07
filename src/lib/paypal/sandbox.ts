@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Dispute } from "../types";
 import type { EvidenceSubmission, PayPalGateway } from "./gateway";
+import { evidencePdf } from "./evidence-pdf";
 import { makeToolkit, toolkitDefs } from "./toolkit";
 
 const ORDER_MAP = path.join(process.cwd(), "data", "sandbox-orders.json");
@@ -73,16 +74,62 @@ export function sandboxGateway(clientId: string, clientSecret: string): PayPalGa
     getDispute: (id) => toolkit("get_dispute", { dispute_id: id }),
 
     async provideEvidence(id, ev: EvidenceSubmission) {
-      const evidences = ev.evidence_types.map((t) => ({
-        evidence_type: t,
-        notes: ev.notes,
-        ...(t === "PROOF_OF_FULFILLMENT" && ev.tracking
-          ? { evidence_info: { tracking_info: [{ carrier_name: ev.tracking.carrier, tracking_number: ev.tracking.tracking_number }] } }
-          : {}),
-      }));
-      const form = new FormData();
-      form.append("input", new Blob([JSON.stringify({ evidences })], { type: "application/json" }));
-      await call("POST", `/v1/customer/disputes/${id}/provide-evidence`, form);
+      // PayPal only accepts what the dispute's links allow. A chargeback that is
+      // UNDER_REVIEW (what the sandbox creates for an item-not-received claim paid by
+      // card) takes provide-supporting-info, not provide-evidence.
+      const d = (await toolkit("get_dispute", { dispute_id: id })) as Dispute & { links?: Array<{ rel: string }>; evidences?: Array<{ evidence_type: string; source?: string; dispute_life_cycle_stage?: string }> };
+      const rels = new Set((d.links ?? []).map((l) => l.rel));
+      if (!rels.has("provide_evidence") && rels.has("provide_supporting_info")) {
+        const t = ev.tracking ? `\n\nTracking: ${ev.tracking.carrier} ${ev.tracking.tracking_number}` : "";
+        const form = new FormData();
+        form.append("input", new Blob([JSON.stringify({ notes: `${ev.notes}${t}`.slice(0, 2000) })], { type: "application/json" }));
+        await call("POST", `/v1/customer/disputes/${id}/provide-supporting-info`, form);
+        return;
+      }
+      if (!rels.has("provide_evidence")) {
+        throw new Error(`PayPal isn't accepting evidence on this dispute right now (status ${d.status}; allowed: ${[...rels].filter((r) => r !== "self").join(", ") || "none"}).`);
+      }
+
+      // Learned on a live sandbox chargeback (2026-10-07): several evidences in one call
+      // fail (400 without item_id, 500 with it); PROOF_OF_FULFILLMENT was refused with
+      // EVIDENCE_TYPE_IS_NOT_ALLOWED even though PayPal had requested it; a single
+      // PROOF_OF_DELIVERY_SIGNATURE with a PDF attached went through and closed the
+      // response. So send one evidence, strongest type first, falling through types
+      // PayPal refuses, with the response attached as a PDF.
+      const requested = (d.evidences ?? [])
+        .filter((e: { source?: string; dispute_life_cycle_stage?: string }) => e.source === "REQUESTED_FROM_SELLER" && e.dispute_life_cycle_stage === d.dispute_life_cycle_stage)
+        .map((e: { evidence_type: string }) => e.evidence_type)
+        .filter((t: string) => t !== "PROOF_OF_REFUND");
+      const order = ["PROOF_OF_DELIVERY_SIGNATURE", "PROOF_OF_FULFILLMENT", "ITEM_DESCRIPTION", "PROOF_OF_RECEIPT_COPY", "RETURN_POLICY", "OTHER"];
+      const types = [...new Set<string>([...ev.evidence_types, ...requested])].sort((a, b) => rank(a) - rank(b));
+      function rank(t: string) {
+        const i = order.indexOf(t);
+        return i < 0 ? order.length : i;
+      }
+      const t = ev.tracking ? `\nTracking: ${ev.tracking.carrier} ${ev.tracking.tracking_number}` : "";
+      const notes = `${ev.notes}${t}`.slice(0, 2000);
+      let lastError: unknown;
+      for (const type of types) {
+        const evidence = {
+          evidence_type: type,
+          notes,
+          documents: [{ name: "seller-response.pdf" }],
+          ...(type === "PROOF_OF_FULFILLMENT" && ev.tracking
+            ? { evidence_info: { tracking_info: [{ carrier_name: ev.tracking.carrier, tracking_number: ev.tracking.tracking_number }] } }
+            : {}),
+        };
+        const form = new FormData();
+        form.append("input", new Blob([JSON.stringify({ evidences: [evidence] })], { type: "application/json" }));
+        form.append("file1", evidencePdf(`Seller response to PayPal dispute ${id}`, notes), "seller-response.pdf");
+        try {
+          await call("POST", `/v1/customer/disputes/${id}/provide-evidence`, form);
+          return;
+        } catch (e) {
+          lastError = e;
+          if (!/EVIDENCE_TYPE_IS_NOT_ALLOWED/.test(e instanceof Error ? e.message : "")) throw e;
+        }
+      }
+      throw lastError ?? new Error("No evidence type to send.");
     },
 
     async makeOffer(id, offer) {

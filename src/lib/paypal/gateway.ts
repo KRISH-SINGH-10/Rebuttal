@@ -1,0 +1,40 @@
+import type { Dispute } from "../types";
+
+// JSON-schema tool definition, as exposed by the PayPal Agent Toolkit.
+export type ToolDef = { name: string; description: string; input_schema: { type: "object"; [k: string]: unknown } };
+
+export type EvidenceSubmission = {
+  notes: string;
+  evidence_types: string[];
+  tracking?: { carrier: string; tracking_number: string };
+};
+
+export interface PayPalGateway {
+  mode: "sandbox" | "mock";
+
+  // Read side: the agent calls these through `runTool`.
+  agentTools(): ToolDef[];
+  runTool(name: string, input: Record<string, unknown>): Promise<unknown>;
+
+  // The shop's own order system remembers which PayPal order paid each invoice.
+  orderIdForInvoice(invoiceId: string): Promise<string | null>;
+
+  listDisputes(): Promise<Dispute[]>;
+  getDispute(id: string): Promise<Dispute>;
+
+  // Write side: only ever called after the seller approves.
+  provideEvidence(id: string, ev: EvidenceSubmission): Promise<void>;
+  makeOffer(id: string, offer: { amount: string; currency: string; type: "REFUND" | "REFUND_WITH_RETURN"; note: string }): Promise<void>;
+  acceptClaim(id: string, note: string): Promise<void>;
+
+  // Checks a webhook delivery really came from PayPal.
+  verifyWebhook(headers: Headers, event: unknown): Promise<boolean>;
+
+  // Sandbox-only simulation of PayPal's side of the dispute.
+  simulateRuling(id: string, outcome: "SELLER_FAVOR" | "BUYER_FAVOR"): Promise<void>;
+  fileTestDispute(scenarioKey?: string): Promise<Dispute>;
+}
+
+// Tools the agent may call. Read-only by design: every money-moving call is made
+// by the server after the seller clicks Approve, never by the model.
+export const AGENT_TOOL_NAMES = ["get_dispute", "get_order", "get_shipment_tracking", "list_transactions"] as const;

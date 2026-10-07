@@ -1,0 +1,292 @@
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { CaseRecord, Decision, TraceStep } from "@/lib/types";
+import { daysLeft, DECISION_COLOR, DECISION_LABEL, money, REASON_LABEL, statusLabel } from "./format";
+
+const TOOL_LABEL: Record<string, string> = {
+  get_dispute: "PayPal Disputes API",
+  get_order: "PayPal Orders API",
+  get_shipment_tracking: "PayPal Shipment Tracking",
+  list_transactions: "PayPal Transaction Search",
+  get_store_records: "Shop records",
+};
+
+export default function CaseView({ id }: { id: string }) {
+  const [c, setC] = useState<CaseRecord | null>(null);
+  const [live, setLive] = useState<TraceStep[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [decision, setDecision] = useState<Decision>("FIGHT");
+  const [response, setResponse] = useState("");
+  const [offer, setOffer] = useState("");
+  const started = useRef(false);
+
+  const adopt = useCallback((rec: CaseRecord) => {
+    setC(rec);
+    if (rec.recommendation && !rec.submitted) {
+      setDecision(rec.recommendation.decision);
+      setResponse(rec.recommendation.response_to_paypal);
+      setOffer(rec.recommendation.offer_amount ? String(rec.recommendation.offer_amount) : "");
+    }
+  }, []);
+
+  const analyze = useCallback(async () => {
+    setBusy("analyze");
+    setError(null);
+    setLive([]);
+    setC((cur) => (cur ? { ...cur, status: "ANALYZING", recommendation: undefined } : cur));
+    const res = await fetch(`/api/cases/${id}/analyze`, { method: "POST" });
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop()!;
+      for (const line of lines.filter(Boolean)) {
+        const msg = JSON.parse(line);
+        if (msg.type === "step") setLive((s) => [...s, msg.step]);
+        if (msg.type === "done") adopt(msg.case);
+        if (msg.type === "error") setError(msg.error);
+      }
+    }
+    setBusy(null);
+  }, [id, adopt]);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch(`/api/cases/${id}`, { cache: "no-store" });
+      if (!res.ok) {
+        // A case filed a moment ago may not be loaded yet; syncing the inbox picks it up.
+        await fetch("/api/cases", { cache: "no-store" });
+        const again = await fetch(`/api/cases/${id}`, { cache: "no-store" });
+        if (!again.ok) return setError("Dispute not found.");
+        return adopt(await again.json());
+      }
+      const rec: CaseRecord = await res.json();
+      adopt(rec);
+      if (rec.status === "NEW" && !started.current) {
+        started.current = true;
+        analyze();
+      }
+    })();
+  }, [id, adopt, analyze]);
+
+  async function post(path: string, body: unknown, label: string) {
+    setBusy(label);
+    setError(null);
+    const res = await fetch(`/api/cases/${id}/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const json = await res.json();
+    setBusy(null);
+    if (!res.ok) return setError(json.error);
+    adopt(json);
+  }
+
+  if (!c) return <p className="text-muted">{error ?? "Loading..."}</p>;
+
+  const d = c.dispute;
+  const t = d.disputed_transactions[0];
+  const r = c.recommendation;
+  const trace = busy === "analyze" ? live : c.trace;
+  const due = daysLeft(d.seller_response_due_date);
+
+  return (
+    <div className="space-y-6">
+      <Link href="/" className="text-sm text-muted hover:text-ink">&larr; All disputes</Link>
+
+      <section className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-sm text-muted">{d.dispute_id} &middot; invoice {t?.invoice_number}</div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {t?.buyer?.name}: {REASON_LABEL[d.reason].toLowerCase()}
+          </h1>
+          <div className="text-muted">{t?.items?.[0]?.item_description}</div>
+        </div>
+        <div className="text-right">
+          <div className="text-3xl font-semibold tabular">{money(d.dispute_amount.value, d.dispute_amount.currency_code)}</div>
+          <div className="text-sm" style={{ color: due !== null && due <= 3 && !c.submitted ? "var(--danger)" : "var(--muted)" }}>
+            {c.submitted ? statusLabel(c) : due === null ? "" : `Respond within ${due} day${due === 1 ? "" : "s"}`}
+            {" "}&middot; {d.dispute_life_cycle_stage === "CHARGEBACK" ? "Chargeback" : "Inquiry"}
+          </div>
+        </div>
+      </section>
+
+      {error ? <p className="rounded-md border border-danger px-3 py-2 text-sm text-danger">{error}</p> : null}
+
+      {c.outcome ? <OutcomeBanner c={c} /> : null}
+
+      <div className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
+        <div className="space-y-6">
+          <Panel title="What the buyer said">
+            {(d.messages ?? []).filter((m) => m.posted_by === "BUYER").map((m, i) => (
+              <blockquote key={i} className="border-l-2 border-line pl-3 text-sm">&ldquo;{m.content}&rdquo;</blockquote>
+            ))}
+          </Panel>
+
+          <Panel
+            title="Agent investigation"
+            action={
+              !c.submitted ? (
+                <button onClick={analyze} disabled={busy !== null} className="text-sm text-accent disabled:opacity-50">
+                  {busy === "analyze" ? "Investigating..." : c.status === "NEW" ? "Investigate" : "Re-run"}
+                </button>
+              ) : null
+            }
+          >
+            {trace.length === 0 && busy !== "analyze" ? <p className="text-sm text-muted">Not investigated yet.</p> : null}
+            <ol className="space-y-3">
+              {trace.map((s, i) => (
+                <li key={i} className="flex gap-3 text-sm">
+                  <span aria-hidden className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: s.kind === "error" ? "var(--danger)" : "var(--accent)" }} />
+                  <div>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted">{s.tool ? TOOL_LABEL[s.tool] ?? s.tool : "Agent"}</div>
+                    <div>{s.summary}</div>
+                  </div>
+                </li>
+              ))}
+              {busy === "analyze" ? (
+                <li className="flex gap-3 text-sm text-muted">
+                  <span aria-hidden className="mt-1.5 h-2 w-2 shrink-0 animate-pulse rounded-full bg-muted" />
+                  Thinking...
+                </li>
+              ) : null}
+            </ol>
+          </Panel>
+        </div>
+
+        <div className="space-y-6">
+          {r ? (
+            <Panel title="Recommendation">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="rounded-full px-3 py-1 text-sm font-semibold text-panel" style={{ background: DECISION_COLOR[r.decision] }}>
+                  {DECISION_LABEL[r.decision]}
+                </span>
+                <span className="text-sm text-muted tabular">{Math.round(r.win_probability * 100)}% chance PayPal rules for you if you fight</span>
+              </div>
+              <p className="text-lg font-medium leading-snug">{r.headline}</p>
+              <p className="text-sm text-muted">{r.rationale}</p>
+              {r.evidence.length ? (
+                <div>
+                  <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Evidence found</h3>
+                  <ul className="space-y-2">
+                    {r.evidence.map((e, i) => (
+                      <li key={i} className="rounded-md border border-line px-3 py-2 text-sm">
+                        <div>{e.summary}</div>
+                        <div className="text-xs text-muted">{e.type.replaceAll("_", " ").toLowerCase()} &middot; from {TOOL_LABEL[e.source] ?? e.source}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {r.risks.length ? (
+                <div>
+                  <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Risks</h3>
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-muted">{r.risks.map((x, i) => <li key={i}>{x}</li>)}</ul>
+                </div>
+              ) : null}
+            </Panel>
+          ) : null}
+
+          {r && !c.submitted ? (
+            <Panel title="Your response">
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Decision">
+                {(["FIGHT", "OFFER", "REFUND"] as Decision[]).map((x) => (
+                  <button
+                    key={x}
+                    role="radio"
+                    aria-checked={decision === x}
+                    onClick={() => setDecision(x)}
+                    className="rounded-md border px-3 py-1.5 text-sm"
+                    style={decision === x ? { borderColor: DECISION_COLOR[x], color: DECISION_COLOR[x], fontWeight: 600 } : { borderColor: "var(--line)" }}
+                  >
+                    {DECISION_LABEL[x]}
+                    {x === r.decision ? " (recommended)" : ""}
+                  </button>
+                ))}
+              </div>
+              {decision === "OFFER" ? (
+                <label className="flex items-center gap-2 text-sm">
+                  Refund amount
+                  <input value={offer} onChange={(e) => setOffer(e.target.value)} inputMode="decimal" className="w-28 rounded-md border border-line bg-bg px-2 py-1 tabular" />
+                  <span className="text-muted">of {money(d.dispute_amount.value)}</span>
+                </label>
+              ) : null}
+              <label className="block text-sm">
+                <span className="text-muted">{decision === "FIGHT" ? "Statement sent to PayPal with the evidence" : "Note sent to PayPal"}</span>
+                <textarea value={response} onChange={(e) => setResponse(e.target.value)} rows={9} maxLength={2000} className="mt-1 w-full rounded-md border border-line bg-bg p-3 text-sm leading-relaxed" />
+              </label>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-muted tabular">{response.length}/2000</span>
+                <button
+                  onClick={() => post("approve", { decision, response, offer_amount: decision === "OFFER" ? Number(offer) : undefined, offer_type: r.offer_type !== "NONE" ? r.offer_type : undefined }, "approve")}
+                  disabled={busy !== null || !response.trim()}
+                  className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-panel disabled:opacity-60"
+                >
+                  {busy === "approve" ? "Sending..." : decision === "FIGHT" ? "Approve and send evidence" : decision === "OFFER" ? "Approve and send offer" : "Approve refund"}
+                </button>
+              </div>
+            </Panel>
+          ) : null}
+
+          {c.submitted ? (
+            <Panel title="Sent to PayPal">
+              <p className="text-sm">
+                {DECISION_LABEL[c.submitted.decision]}
+                {c.submitted.offer_amount ? ` of ${money(c.submitted.offer_amount)}` : ""} &middot; {new Date(c.submitted.at).toLocaleString()}
+              </p>
+              <p className="whitespace-pre-wrap rounded-md bg-bg p-3 text-sm text-muted">{c.submitted.response}</p>
+              {!c.outcome ? (
+                <div className="space-y-2 border-t border-line pt-3">
+                  <p className="text-sm text-muted">
+                    Sandbox: PayPal&apos;s review takes days in real life. Simulate the ruling to see the outcome.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => post("ruling", { outcome: "SELLER_FAVOR" }, "ruling")} disabled={busy !== null} className="rounded-md border border-line px-3 py-1.5 text-sm">
+                      {c.submitted.decision === "OFFER" ? "Buyer accepts offer" : "PayPal rules for seller"}
+                    </button>
+                    {c.submitted.decision === "FIGHT" ? (
+                      <button onClick={() => post("ruling", { outcome: "BUYER_FAVOR" }, "ruling")} disabled={busy !== null} className="rounded-md border border-line px-3 py-1.5 text-sm">
+                        PayPal rules for buyer
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+            </Panel>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OutcomeBanner({ c }: { c: CaseRecord }) {
+  const o = c.outcome!;
+  const good = o.amount_kept > 0;
+  const text =
+    o.result === "WON" ? `PayPal ruled for you. You keep ${money(o.amount_kept)}.`
+    : o.result === "SETTLED" ? `Buyer accepted your offer. You keep ${money(o.amount_kept)} of ${money(c.dispute.dispute_amount.value)}.`
+    : o.result === "REFUNDED" ? `Refunded ${money(o.amount_lost)}. Case closed without a fight.`
+    : `PayPal ruled for the buyer. ${money(o.amount_lost)} refunded.`;
+  return (
+    <div className="rounded-lg px-4 py-3 font-medium" style={{ background: good ? "var(--accent-soft)" : "var(--bg)", color: good ? "var(--accent)" : "var(--refund)", border: "1px solid var(--line)" }}>
+      {text}
+    </div>
+  );
+}
+
+function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="space-y-3 rounded-lg border border-line bg-panel p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold">{title}</h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}

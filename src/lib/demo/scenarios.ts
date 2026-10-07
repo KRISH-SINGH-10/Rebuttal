@@ -199,4 +199,5 @@ export const SCENARIOS: Scenario[] = [
   },
 ];
 
-export const scenarioByKey = (key: string) => SCENARIOS.find((s) => s.key === key);
+// Seeded sandbox orders carry a suffix (JK-1042-AB12) because sandbox invoice IDs must be unique.
+export const scenarioByKey = (key: string) => SCENARIOS.find((s) => s.key === key || key.startsWith(`${s.key}-`));

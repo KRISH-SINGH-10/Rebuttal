@@ -8,7 +8,8 @@
     "start": "next start -p ${PORT:-3000}",
     "test": "vitest run",
     "typecheck": "next typegen && tsc --noEmit",
-    "check:live": "node scripts/live-check.mjs"
+    "check:live": "node scripts/live-check.mjs",
+    "seed:sandbox": "node scripts/seed-sandbox.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

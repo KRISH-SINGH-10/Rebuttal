@@ -91,7 +91,9 @@ export type AnalyzeOptions = {
 };
 
 export async function analyzeDispute(dispute: Dispute, opts: AnalyzeOptions = {}): Promise<{ recommendation: Recommendation; trace: TraceStep[] }> {
-  const client = opts.client ?? new Anthropic().beta.messages;
+  // APP_ANTHROPIC_API_KEY keeps the app's key separate from any ANTHROPIC_API_KEY that
+  // developer tooling in the same environment might pick up.
+  const client = opts.client ?? new Anthropic({ apiKey: process.env.APP_ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY }).beta.messages;
   const gw = paypal();
   const trace: TraceStep[] = [];
   const step = (s: Omit<TraceStep, "at">) => {

@@ -39,7 +39,7 @@ Requires Node 22+.
 
 ```bash
 npm install
-cp .env.example .env.local   # add ANTHROPIC_API_KEY
+cp .env.example .env.local   # add APP_ANTHROPIC_API_KEY
 npm run dev                  # http://localhost:3000
 ```
 

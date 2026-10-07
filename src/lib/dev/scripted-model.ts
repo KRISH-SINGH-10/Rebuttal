@@ -36,7 +36,7 @@ export function scriptedModel() {
             decision,
             win_probability: decision === "FIGHT" ? 0.82 : decision === "OFFER" ? 0.4 : 0.1,
             headline: `[scripted] ${decision} this ${s.reason.toLowerCase().replaceAll("_", " ")} dispute.`,
-            rationale: "Scripted development response. Run with ANTHROPIC_API_KEY for a real analysis.",
+            rationale: "Scripted development response. Run with APP_ANTHROPIC_API_KEY for a real analysis.",
             evidence: f.tracking_number ? [{ type: "PROOF_OF_FULFILLMENT", summary: `${f.carrier} ${f.tracking_number}: ${f.carrier_events.at(-1)?.status}`, source: "get_store_records" }] : [],
             response_to_paypal: `Order ${invoice} for ${s.item.name}. ${f.carrier_events.map((e) => `${e.at.slice(0, 10)}: ${e.status}`).join(". ") || "Shipped without tracking."}`,
             tracking_carrier: f.carrier ?? "",

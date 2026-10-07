@@ -1,11 +1,13 @@
 // Checks the live services Rebuttal needs, without printing any secret:
 //   node scripts/live-check.mjs
-// 1. Gemini: lists the models this key can call and confirms GEMINI_MODEL is one of them.
+// 1. Gemini: lists the flash models this key sees, then sends a one-line prompt to
+//    GEMINI_MODEL (default gemini-3.5-flash-lite), because a listed model can still be
+//    retired for new keys, overloaded, or hang.
 // 2. PayPal sandbox: lists disputes through the PayPal Agent Toolkit.
 import { GoogleGenAI } from "@google/genai";
 import { ALL_TOOLS_ENABLED, PayPalAgentToolkit } from "@paypal/agent-toolkit/openai";
 
-const want = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const want = process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite";
 let failed = false;
 
 if (!process.env.GEMINI_API_KEY) {
@@ -19,6 +21,9 @@ if (!process.env.GEMINI_API_KEY) {
     const flash = names.filter((n) => /flash/.test(n));
     console.log(`Gemini: ${names.length} models; ${want} ${names.includes(want) ? "available" : "NOT available"}. Flash models: ${flash.join(", ")}`);
     if (!names.includes(want)) failed = true;
+    const t0 = Date.now();
+    const res = await ai.models.generateContent({ model: want, contents: "Reply with exactly: pong", config: { abortSignal: AbortSignal.timeout(45_000) } });
+    console.log(`Gemini: ${want} answered "${(res.text ?? "").trim()}" in ${Date.now() - t0} ms`);
   } catch (e) {
     console.log(`Gemini: ${e.status ?? ""} ${String(e.message).slice(0, 200)}`);
     failed = true;
@@ -31,6 +36,7 @@ if (!id || !secret) {
   failed = true;
 } else {
   const tk = new PayPalAgentToolkit({ clientId: id, clientSecret: secret, configuration: { actions: ALL_TOOLS_ENABLED, context: { sandbox: true } } });
+  tk.client._baseUrl = "https://api-m.sandbox.paypal.com"; // same override as src/lib/paypal/toolkit.ts
   const msg = await tk.handleToolCall({ id: "check", type: "function", function: { name: "list_disputes", arguments: JSON.stringify({ page_size: 10 }) } });
   const out = JSON.parse(msg.content);
   if (out.error) {

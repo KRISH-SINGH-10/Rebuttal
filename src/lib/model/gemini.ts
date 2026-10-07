@@ -6,35 +6,69 @@ import { GoogleGenAI, type Content, type GenerateContentResponse, type Part } fr
 import type { ToolDef } from "../paypal/gateway";
 import type { AgentModel, ChatEntry, ModelTurn, ToolCall } from "./types";
 
-export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+// gemini-2.5-flash is closed to new API keys, and on 2026-10-07 the larger 3.x flash
+// models were often overloaded (503) or never answered on the free tier. Flash-lite
+// answered in about a second, so it leads; the others are tried if it fails.
+export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
+export const DEFAULT_GEMINI_FALLBACKS = ["gemini-3.5-flash", "gemini-flash-lite-latest"];
+const REQUEST_TIMEOUT_MS = 45_000;
 
 type GenerateClient = { models: { generateContent(params: any): Promise<GenerateContentResponse> } };
 
-export function geminiModel(opts: { apiKey?: string; model?: string; client?: GenerateClient; retryDelaysMs?: number[] } = {}): AgentModel {
-  const model = opts.model ?? process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
+export function geminiModel(
+  opts: { apiKey?: string; model?: string; fallbacks?: string[]; client?: GenerateClient; retryDelaysMs?: number[]; timeoutMs?: number } = {},
+): AgentModel {
+  const primary = opts.model ?? process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
+  const fallbacks = opts.fallbacks ?? (process.env.GEMINI_FALLBACK_MODELS?.split(",").map((m) => m.trim()).filter(Boolean) ?? DEFAULT_GEMINI_FALLBACKS);
+  const candidates = [primary, ...fallbacks.filter((m) => m !== primary)];
   let client = opts.client;
-  const delays = opts.retryDelaysMs ?? [2_000, 5_000, 12_000, 25_000];
+  const delays = opts.retryDelaysMs ?? [2_000, 5_000, 12_000];
+  const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
   let seq = 0;
+  // Index of the model in use. Once a model fails we stay on the next one for the rest
+  // of the investigation instead of hammering the one that is down.
+  let current = 0;
 
-  return {
+  const self: AgentModel = {
     provider: "gemini",
-    model,
+    model: primary,
     async next({ system, tools, history }) {
       client ??= new GoogleGenAI({ apiKey: opts.apiKey ?? process.env.GEMINI_API_KEY });
-      const params = {
-        model,
-        contents: toContents(history),
-        config: {
-          systemInstruction: system,
-          temperature: 0.2,
-          maxOutputTokens: 8192,
-          tools: [{ functionDeclarations: tools.map(toDeclaration) }],
-        },
-      };
-      const res = await withRetry(() => client!.models.generateContent(params), delays);
-      return fromResponse(res, () => `gen_${++seq}`);
+      for (;;) {
+        const model = candidates[current];
+        const call = () =>
+          client!.models.generateContent({
+            model,
+            contents: toContents(history),
+            config: {
+              systemInstruction: system,
+              temperature: 0.2,
+              maxOutputTokens: 8192,
+              tools: [{ functionDeclarations: tools.map(toDeclaration) }],
+              abortSignal: AbortSignal.timeout(timeoutMs),
+            },
+          });
+        try {
+          const res = await withRetry(call, delays);
+          self.model = model;
+          return fromResponse(res, () => `gen_${++seq}`);
+        } catch (e) {
+          if (current >= candidates.length - 1 || !isModelUnavailable(e)) throw e;
+          current++;
+        }
+      }
     },
   };
+  return self;
+}
+
+// Worth moving to the next model: overloaded, retired, rate limited, or no answer in time.
+function isModelUnavailable(e: unknown) {
+  if (e instanceof RateLimitError) return true;
+  const status = (e as { status?: number }).status;
+  if (status === 404 || status === 429 || status === 500 || status === 503) return true;
+  const name = (e as { name?: string }).name;
+  return name === "AbortError" || name === "TimeoutError" || /aborted|timed? ?out/i.test(e instanceof Error ? e.message : "");
 }
 
 function toDeclaration(t: ToolDef) {

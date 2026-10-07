@@ -99,7 +99,15 @@ async function capture(wait) {
     const pending = readJson(PENDING, {});
     const map = readJson(ORDER_MAP, {});
     for (const [orderId, p] of Object.entries(pending)) {
-      const order = await api(tok, "GET", `/v2/checkout/orders/${orderId}`);
+      const order = await api(tok, "GET", `/v2/checkout/orders/${orderId}`).catch((e) => {
+        if (!/\(404\)/.test(e.message)) throw e;
+        // Unpaid sandbox orders expire after a few hours; run `create` again for a new link.
+        console.log(`${p.key}: order ${orderId} expired before the buyer paid; dropped.`);
+        delete pending[orderId];
+        writeJson(PENDING, pending);
+        return null;
+      });
+      if (!order) continue;
       if (order.status !== "APPROVED" && order.status !== "COMPLETED") continue;
       const done = order.status === "COMPLETED" ? order : await api(tok, "POST", `/v2/checkout/orders/${orderId}/capture`, {});
       const cap = done.purchase_units[0].payments.captures[0];

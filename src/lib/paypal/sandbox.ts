@@ -1,6 +1,8 @@
-// Live PayPal sandbox gateway. Reads go through the PayPal Agent Toolkit; dispute
-// actions call the Disputes REST API directly because the toolkit does not cover
-// provide-evidence, make-offer or the sandbox simulation endpoints.
+// Live PayPal sandbox gateway. Everything the PayPal Agent Toolkit covers goes through
+// it: the agent's read tools, listing and reading disputes, accepting a claim and
+// adding shipment tracking. The Disputes REST API is called directly only for what the
+// toolkit (v1.11) lacks: provide-evidence, make-offer, the sandbox adjudicate
+// simulation and webhook signature checks.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -28,24 +30,30 @@ export function sandboxGateway(clientId: string, clientSecret: string): PayPalGa
     return text ? JSON.parse(text) : {};
   }
 
+  // Runs one Agent Toolkit tool. The toolkit reports PayPal errors as an `error` object
+  // in its result rather than throwing, so turn those back into exceptions.
+  async function toolkit(name: string, input: Record<string, unknown>): Promise<any> {
+    const msg = await tk.handleToolCall({ id: `call_${Date.now()}`, type: "function", function: { name, arguments: JSON.stringify(input) } });
+    const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+    let out: any = content;
+    try {
+      out = JSON.parse(content);
+    } catch {
+      // plain text
+    }
+    if (out && typeof out === "object" && "error" in out && out.error) {
+      const err = out.error as { message?: string };
+      throw new Error(`PayPal ${name} failed: ${err.message ?? JSON.stringify(err).slice(0, 500)}`);
+    }
+    return out;
+  }
+
   return {
     mode: "sandbox",
 
     agentTools: () => defs,
 
-    async runTool(name, input) {
-      const msg = await tk.handleToolCall({
-        id: `call_${Date.now()}`,
-        type: "function",
-        function: { name, arguments: JSON.stringify(input) },
-      });
-      const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
-      try {
-        return JSON.parse(content);
-      } catch {
-        return content;
-      }
-    },
+    runTool: (name, input) => toolkit(name, input),
 
     async orderIdForInvoice(invoiceId) {
       try {
@@ -57,12 +65,12 @@ export function sandboxGateway(clientId: string, clientSecret: string): PayPalGa
     },
 
     async listDisputes() {
-      const list = await call("GET", "/v1/customer/disputes?page_size=50");
+      const list = await toolkit("list_disputes", { page_size: 50 });
       const items: Array<{ dispute_id: string }> = list.items ?? [];
-      return Promise.all(items.map((d) => call("GET", `/v1/customer/disputes/${d.dispute_id}`) as Promise<Dispute>));
+      return Promise.all(items.map((d) => toolkit("get_dispute", { dispute_id: d.dispute_id }) as Promise<Dispute>));
     },
 
-    getDispute: (id) => call("GET", `/v1/customer/disputes/${id}`),
+    getDispute: (id) => toolkit("get_dispute", { dispute_id: id }),
 
     async provideEvidence(id, ev: EvidenceSubmission) {
       const evidences = ev.evidence_types.map((t) => ({
@@ -86,7 +94,22 @@ export function sandboxGateway(clientId: string, clientSecret: string): PayPalGa
     },
 
     async acceptClaim(id, note) {
-      await call("POST", `/v1/customer/disputes/${id}/accept-claim`, { note, accept_claim_type: "REFUND" });
+      try {
+        await toolkit("accept_dispute_claim", { dispute_id: id, note });
+      } catch (e) {
+        // The toolkit's tool also sends its arguments as query parameters; if PayPal
+        // rejects that, make the same call directly.
+        console.warn("accept_dispute_claim via Agent Toolkit failed, retrying over REST:", e instanceof Error ? e.message : e);
+        await call("POST", `/v1/customer/disputes/${id}/accept-claim`, { note, accept_claim_type: "REFUND" });
+      }
+    },
+
+    async addTracking(transactionId, t) {
+      const existing = await toolkit("get_shipment_tracking", { transaction_id: transactionId }).catch(() => null);
+      const trackers: Array<{ tracking_number?: string }> = existing?.trackers ?? [];
+      if (trackers.some((x) => x.tracking_number === t.tracking_number)) return "exists";
+      await toolkit("create_shipment_tracking", { transaction_id: transactionId, tracking_number: t.tracking_number, carrier: t.carrier, status: "SHIPPED" });
+      return "added";
     },
 
     async verifyWebhook(headers, event) {

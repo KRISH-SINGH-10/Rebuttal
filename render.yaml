@@ -8,6 +8,12 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+      - key: AI_PROVIDER
+        sync: false
       - key: APP_ANTHROPIC_API_KEY
         sync: false
       - key: PAYPAL_CLIENT_ID

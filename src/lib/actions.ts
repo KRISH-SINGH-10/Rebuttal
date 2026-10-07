@@ -25,6 +25,17 @@ export async function approve(caseId: string, a: Approval): Promise<CaseRecord> 
     const types = [...new Set<EvidenceType>(r?.evidence.map((e) => e.type) ?? ["OTHER"])];
     const tracking = r?.tracking_number ? { carrier: r.tracking_carrier, tracking_number: r.tracking_number } : undefined;
     if (tracking && !types.includes("PROOF_OF_FULFILLMENT")) types.unshift("PROOF_OF_FULFILLMENT");
+    const txnId = c.dispute.disputed_transactions[0]?.seller_transaction_id;
+    if (tracking && txnId) {
+      // Best effort: the evidence below carries the tracking too, so a failure here
+      // shouldn't block the response.
+      try {
+        const res = await gw.addTracking(txnId, tracking);
+        if (res === "added") note(caseId, `Added ${tracking.carrier} tracking ${tracking.tracking_number} to the PayPal transaction.`);
+      } catch (e) {
+        note(caseId, `Could not add tracking to the PayPal transaction: ${e instanceof Error ? e.message : e}`, "error");
+      }
+    }
     await gw.provideEvidence(caseId, { notes: response, evidence_types: types, tracking });
   } else if (a.decision === "OFFER") {
     const amount = Number(a.offer_amount);
@@ -42,6 +53,11 @@ export async function approve(caseId: string, a: Approval): Promise<CaseRecord> 
     submitted: { decision: a.decision, at: new Date().toISOString(), response, offer_amount: a.offer_amount },
     outcome: a.decision === "REFUND" ? outcomeFor(dispute, "REFUND") : undefined,
   });
+}
+
+function note(caseId: string, summary: string, kind: "note" | "error" = "note") {
+  const c = getCase(caseId);
+  if (c) updateCase(caseId, { trace: [...c.trace, { at: new Date().toISOString(), kind, summary }] });
 }
 
 // Sandbox only: ask PayPal to rule on the dispute so the full lifecycle can be shown.

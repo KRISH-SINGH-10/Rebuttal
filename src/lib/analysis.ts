@@ -1,12 +1,16 @@
 import { analyzeDispute } from "./agent";
 import { getCase, updateCase } from "./cases";
 import { scriptedModel } from "./dev/scripted-model";
+import { loadInvestigation, saveInvestigation } from "./investigation-cache";
+import { claudeModel } from "./model";
+import { RateLimitError } from "./model/gemini";
 import { paypal } from "./paypal";
 import type { CaseRecord, TraceStep } from "./types";
 
 const running = new Set<string>();
+const REPLAY_STEP_MS = 450;
 
-export async function runAnalysis(caseId: string, onStep?: (s: TraceStep) => void): Promise<CaseRecord> {
+export async function runAnalysis(caseId: string, onStep?: (s: TraceStep) => void, opts: { fresh?: boolean } = {}): Promise<CaseRecord> {
   const c = getCase(caseId);
   if (!c) throw new Error(`Unknown case ${caseId}`);
   if (c.submitted) throw new Error("This dispute already has a response.");
@@ -16,16 +20,29 @@ export async function runAnalysis(caseId: string, onStep?: (s: TraceStep) => voi
     const dispute = await paypal().getDispute(caseId);
     updateCase(caseId, { dispute, status: "ANALYZING", trace: [], recommendation: undefined, error: undefined });
     const trace: TraceStep[] = [];
+    const emit = (s: TraceStep) => {
+      trace.push(s);
+      updateCase(caseId, { trace: [...trace] });
+      onStep?.(s);
+    };
+
+    const saved = opts.fresh ? null : loadInvestigation(dispute);
+    if (saved) return await replay(caseId, saved, emit);
+
     const scripted = process.env.REBUTTAL_SCRIPTED_MODEL === "1" && process.env.NODE_ENV !== "production";
-    const { recommendation } = await analyzeDispute(dispute, {
-      client: scripted ? (scriptedModel() as never) : undefined,
-      onStep: (s) => {
-        trace.push(s);
-        updateCase(caseId, { trace: [...trace] });
-        onStep?.(s);
-      },
-    });
-    return updateCase(caseId, { status: "READY", recommendation, trace });
+    try {
+      const { recommendation, model } = await analyzeDispute(dispute, {
+        model: scripted ? claudeModel({ client: scriptedModel() as never }) : undefined,
+        onStep: emit,
+      });
+      if (!scripted) saveInvestigation(dispute, { model, recommendation, trace });
+      return updateCase(caseId, { status: "READY", recommendation, trace });
+    } catch (e) {
+      // Out of free-tier quota on a re-run: fall back to the last saved investigation.
+      const fallback = e instanceof RateLimitError ? loadInvestigation(dispute) : null;
+      if (fallback) return await replay(caseId, fallback, emit, "The AI model is rate-limited right now, so this is the last saved investigation.");
+      throw e;
+    }
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     updateCase(caseId, { status: "ERROR", error });
@@ -33,4 +50,16 @@ export async function runAnalysis(caseId: string, onStep?: (s: TraceStep) => voi
   } finally {
     running.delete(caseId);
   }
+}
+
+// Plays a saved investigation back at a readable pace, so the live trace still shows
+// each step the agent took.
+async function replay(caseId: string, saved: NonNullable<ReturnType<typeof loadInvestigation>>, emit: (s: TraceStep) => void, why?: string) {
+  const date = saved.saved_at.slice(0, 10);
+  emit({ at: new Date().toISOString(), kind: "note", summary: why ?? `Saved investigation from ${date} (${saved.model}). Re-run for a fresh one.` });
+  for (const s of saved.trace) {
+    await new Promise((r) => setTimeout(r, REPLAY_STEP_MS));
+    emit({ ...s, at: new Date().toISOString() });
+  }
+  return updateCase(caseId, { status: "READY", recommendation: saved.recommendation });
 }

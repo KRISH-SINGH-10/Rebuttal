@@ -1,14 +1,15 @@
-// The dispute analyst: Claude investigates a dispute with read-only PayPal tools and
-// the shop's own records, then returns a recommendation the seller approves or edits.
+// The dispute analyst: an AI model (Gemini by default, Claude optional) investigates a
+// dispute with read-only PayPal Agent Toolkit tools and the shop's own records, then
+// returns a recommendation the seller approves or edits.
 
-import Anthropic from "@anthropic-ai/sdk";
-import type { BetaContentBlock, BetaMessageParam, BetaToolResultBlockParam, BetaToolUnion } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import { z } from "zod";
+import { defaultModel, type AgentModel } from "./model";
+import type { ChatEntry, ToolResult } from "./model/types";
 import { paypal } from "./paypal";
+import type { ToolDef } from "./paypal/gateway";
 import { getStoreRecords, STORE_RECORDS_TOOL } from "./store-records";
 import type { Dispute, Recommendation, TraceStep } from "./types";
 
-export const MODEL = "claude-opus-5-5";
 const MAX_TURNS = 14;
 
 const SYSTEM = `You review PayPal disputes for Juniper & Kiln, a two-person online shop, and recommend how the seller should respond. The seller reads your recommendation and approves or edits it before anything is sent to PayPal.
@@ -26,12 +27,12 @@ Rules:
 - win_probability is your honest estimate between 0 and 1 that PayPal rules for the seller if they fight. Give it for every decision.
 - Leave tracking_carrier and tracking_number empty unless a carrier and tracking number appear in the tool results. Set offer_amount to 0 and offer_type to NONE unless the decision is OFFER.`;
 
-const SUBMIT_TOOL = {
+const SUBMIT_TOOL: ToolDef = {
   name: "submit_recommendation",
   description: "Submit the final recommendation to the seller. Call once, after investigating.",
   strict: true,
   input_schema: {
-    type: "object" as const,
+    type: "object",
     additionalProperties: false,
     required: [
       "decision", "win_probability", "headline", "rationale", "evidence", "response_to_paypal",
@@ -83,17 +84,13 @@ const RecommendationSchema = z.object({
   risks: z.array(z.string()),
 });
 
-type MessagesClient = Pick<Anthropic["beta"]["messages"], "create">;
-
 export type AnalyzeOptions = {
-  client?: MessagesClient;
+  model?: AgentModel;
   onStep?: (step: TraceStep) => void;
 };
 
-export async function analyzeDispute(dispute: Dispute, opts: AnalyzeOptions = {}): Promise<{ recommendation: Recommendation; trace: TraceStep[] }> {
-  // APP_ANTHROPIC_API_KEY keeps the app's key separate from any ANTHROPIC_API_KEY that
-  // developer tooling in the same environment might pick up.
-  const client = opts.client ?? new Anthropic({ apiKey: process.env.APP_ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY }).beta.messages;
+export async function analyzeDispute(dispute: Dispute, opts: AnalyzeOptions = {}): Promise<{ recommendation: Recommendation; trace: TraceStep[]; model: string }> {
+  const model = opts.model ?? defaultModel();
   const gw = paypal();
   const trace: TraceStep[] = [];
   const step = (s: Omit<TraceStep, "at">) => {
@@ -102,65 +99,55 @@ export async function analyzeDispute(dispute: Dispute, opts: AnalyzeOptions = {}
     opts.onStep?.(full);
   };
 
-  const tools: BetaToolUnion[] = [...gw.agentTools(), STORE_RECORDS_TOOL, SUBMIT_TOOL];
+  const tools: ToolDef[] = [...gw.agentTools(), STORE_RECORDS_TOOL, SUBMIT_TOOL];
   const txn = dispute.disputed_transactions[0];
-  const messages: BetaMessageParam[] = [
+  const history: ChatEntry[] = [
     {
       role: "user",
-      content: `New dispute ${dispute.dispute_id} on invoice ${txn?.invoice_number ?? "unknown"} (PayPal transaction ${txn?.seller_transaction_id ?? "unknown"}). Investigate and submit your recommendation.`,
+      text: `New dispute ${dispute.dispute_id} on invoice ${txn?.invoice_number ?? "unknown"} (PayPal transaction ${txn?.seller_transaction_id ?? "unknown"}). Investigate and submit your recommendation.`,
     },
   ];
 
   let nudged = false;
   for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const res = await client.create({
-      model: MODEL,
-      max_tokens: 16000,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "medium" },
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      system: SYSTEM,
-      tools,
-      messages,
-    });
+    const res = await model.next({ system: SYSTEM, tools, history });
 
-    if (res.stop_reason === "refusal") throw new Error("The model declined to analyze this dispute.");
-    if (res.stop_reason === "max_tokens") throw new Error("The analysis ran out of output space.");
+    if (res.stop === "refusal") throw new Error("The model declined to analyze this dispute.");
+    if (res.stop === "max_tokens") throw new Error("The analysis ran out of output space.");
 
-    messages.push({ role: "assistant", content: res.content as BetaContentBlock[] });
-    const uses = res.content.filter((b): b is Extract<BetaContentBlock, { type: "tool_use" }> => b.type === "tool_use");
+    history.push({ role: "assistant", turn: res });
 
-    if (uses.length === 0) {
+    if (res.calls.length === 0) {
       if (nudged) throw new Error("The model finished without a recommendation.");
       nudged = true;
-      messages.push({ role: "user", content: "Call submit_recommendation now with your decision." });
+      history.push({ role: "user", text: "Call submit_recommendation now with your decision." });
       continue;
     }
 
-    const results: BetaToolResultBlockParam[] = [];
-    for (const use of uses) {
-      const input = (use.input ?? {}) as Record<string, unknown>;
+    const results: ToolResult[] = [];
+    for (const use of res.calls) {
+      const input = use.input;
+      const reply = (content: string, isError?: boolean) => results.push({ id: use.id, name: use.name, content, ...(isError ? { isError } : {}) });
       if (use.name === SUBMIT_TOOL.name) {
         const parsed = RecommendationSchema.safeParse(input);
         if (parsed.success) {
           step({ kind: "note", summary: `Recommendation: ${parsed.data.decision}` });
-          return { recommendation: parsed.data, trace };
+          return { recommendation: parsed.data, trace, model: `${model.provider}:${model.model}` };
         }
-        results.push({ type: "tool_result", tool_use_id: use.id, is_error: true, content: `Invalid recommendation: ${parsed.error.message}` });
+        reply(`Invalid recommendation: ${parsed.error.message}`, true);
         continue;
       }
       try {
         const out = use.name === STORE_RECORDS_TOOL.name ? await getStoreRecords(String(input.invoice_id)) : await gw.runTool(use.name, input);
         step({ kind: "tool", tool: use.name, input, summary: summarize(use.name, out) });
-        results.push({ type: "tool_result", tool_use_id: use.id, content: JSON.stringify(out) });
+        reply(JSON.stringify(out));
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         step({ kind: "error", tool: use.name, input, summary: msg });
-        results.push({ type: "tool_result", tool_use_id: use.id, is_error: true, content: msg });
+        reply(msg, true);
       }
     }
-    messages.push({ role: "user", content: results });
+    history.push({ role: "tool", results });
   }
   throw new Error("The analysis did not finish within its step limit.");
 }
@@ -168,7 +155,7 @@ export async function analyzeDispute(dispute: Dispute, opts: AnalyzeOptions = {}
 // One-line, human-readable description of what a tool returned, for the live trace.
 export function summarize(tool: string, out: unknown): string {
   const o = (out ?? {}) as Record<string, any>;
-  if (o.error) return String(o.error);
+  if (o.error) return typeof o.error === "object" ? String(o.error.message ?? JSON.stringify(o.error)) : String(o.error);
   switch (tool) {
     case "get_dispute":
       return `Dispute ${o.dispute_id}: ${String(o.reason ?? "").replaceAll("_", " ").toLowerCase()}, $${o.dispute_amount?.value}, ${String(o.dispute_life_cycle_stage ?? "").toLowerCase()}`;

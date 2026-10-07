@@ -1,7 +1,7 @@
 import type { Dispute } from "../types";
 
 // JSON-schema tool definition, as exposed by the PayPal Agent Toolkit.
-export type ToolDef = { name: string; description: string; input_schema: { type: "object"; [k: string]: unknown } };
+export type ToolDef = { name: string; description: string; input_schema: { type: "object"; [k: string]: unknown }; strict?: boolean };
 
 export type EvidenceSubmission = {
   notes: string;
@@ -26,6 +26,9 @@ export interface PayPalGateway {
   provideEvidence(id: string, ev: EvidenceSubmission): Promise<void>;
   makeOffer(id: string, offer: { amount: string; currency: string; type: "REFUND" | "REFUND_WITH_RETURN"; note: string }): Promise<void>;
   acceptClaim(id: string, note: string): Promise<void>;
+  // Makes sure PayPal has the carrier tracking on the disputed transaction before we
+  // fight: PayPal's item-not-received decisions lean heavily on it.
+  addTracking(transactionId: string, t: { carrier: string; tracking_number: string }): Promise<"added" | "exists">;
 
   // Checks a webhook delivery really came from PayPal.
   verifyWebhook(headers: Headers, event: unknown): Promise<boolean>;

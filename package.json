@@ -7,10 +7,12 @@
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
     "test": "vitest run",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "check:live": "node scripts/live-check.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
+    "@google/genai": "^2.27.0",
     "@paypal/agent-toolkit": "^1.11.0",
     "ag-grid-community": "^36.2.0",
     "ag-grid-react": "^36.2.0",

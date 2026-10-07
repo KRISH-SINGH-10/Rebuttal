@@ -237,6 +237,14 @@ export const mockGateway: PayPalGateway = {
     touch(r, { status: "RESOLVED", dispute_outcome: { outcome_code: "RESOLVED_BUYER_FAVOUR", amount_refunded: r.dispute.dispute_amount } });
   },
 
+  async addTracking(transactionId, t) {
+    const r = [...state().rows.values()].find((x) => x.captureId === transactionId);
+    if (!r) throw new Error("RESOURCE_NOT_FOUND: transaction");
+    if (r.tracker?.tracking_number === t.tracking_number) return "exists";
+    r.tracker = { transaction_id: transactionId, tracking_number: t.tracking_number, status: "SHIPPED", carrier: t.carrier, last_updated_time: new Date().toISOString() };
+    return "added";
+  },
+
   async verifyWebhook() {
     return true;
   },

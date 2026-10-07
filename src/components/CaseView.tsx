@@ -32,12 +32,12 @@ export default function CaseView({ id }: { id: string }) {
     }
   }, []);
 
-  const analyze = useCallback(async () => {
+  const analyze = useCallback(async (fresh = false) => {
     setBusy("analyze");
     setError(null);
     setLive([]);
     setC((cur) => (cur ? { ...cur, status: "ANALYZING", recommendation: undefined } : cur));
-    const res = await fetch(`/api/cases/${id}/analyze`, { method: "POST" });
+    const res = await fetch(`/api/cases/${id}/analyze${fresh ? "?fresh=1" : ""}`, { method: "POST" });
     const reader = res.body!.getReader();
     const dec = new TextDecoder();
     let buf = "";
@@ -131,7 +131,7 @@ export default function CaseView({ id }: { id: string }) {
             title="Agent investigation"
             action={
               !c.submitted ? (
-                <button onClick={analyze} disabled={busy !== null} className="text-sm text-accent disabled:opacity-50">
+                <button onClick={() => analyze(c.status !== "NEW")} disabled={busy !== null} className="text-sm text-accent disabled:opacity-50">
                   {busy === "analyze" ? "Investigating..." : c.status === "NEW" ? "Investigate" : "Re-run"}
                 </button>
               ) : null

@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { analyzeDispute } from "../src/lib/agent";
+import { claudeModel } from "../src/lib/model";
 import { paypal } from "../src/lib/paypal";
 import { resetMock } from "../src/lib/paypal/mock";
 
 process.env.PAYPAL_MODE = "mock";
 
-// Scripted stand-in for Claude: replays tool calls, then submits.
+// Scripted stand-in for the Claude API: replays tool calls, then submits.
 function fakeClient(script: Array<Array<{ name: string; input: Record<string, unknown> }>>) {
   const calls: any[] = [];
   let i = 0;
@@ -42,7 +43,7 @@ describe("analyzeDispute", () => {
       [{ name: "submit_recommendation", input: rec }],
     ]);
     const steps: string[] = [];
-    const out = await analyzeDispute(d, { client: client as any, onStep: (s) => steps.push(s.summary) });
+    const out = await analyzeDispute(d, { model: claudeModel({ client: client as any }), onStep: (s) => steps.push(s.summary) });
 
     expect(out.recommendation.decision).toBe("FIGHT");
     expect(out.trace.filter((t) => t.kind === "tool").map((t) => t.tool)).toEqual(["get_dispute", "get_store_records", "get_order", "get_shipment_tracking"]);
@@ -63,7 +64,7 @@ describe("analyzeDispute", () => {
       [{ name: "submit_recommendation", input: { ...rec, win_probability: 7 } }],
       [{ name: "submit_recommendation", input: rec }],
     ]);
-    const out = await analyzeDispute(d, { client: client as any });
+    const out = await analyzeDispute(d, { model: claudeModel({ client: client as any }) });
     expect(out.recommendation.win_probability).toBe(0.85);
     const errResult = client.calls[1].messages.at(-1).content[0];
     expect(errResult.is_error).toBe(true);
@@ -72,13 +73,13 @@ describe("analyzeDispute", () => {
   it("reports tool failures to the model instead of crashing", async () => {
     const [d] = await paypal().listDisputes();
     const client = fakeClient([[{ name: "get_order", input: { id: "NOPE00000000000000" } }], [{ name: "submit_recommendation", input: rec }]]);
-    const out = await analyzeDispute(d, { client: client as any });
+    const out = await analyzeDispute(d, { model: claudeModel({ client: client as any }) });
     expect(out.trace[0].kind).toBe("error");
     expect(client.calls[1].messages.at(-1).content[0].is_error).toBe(true);
   });
 
   it("nudges once when the model stops without submitting, then fails", async () => {
     const [d] = await paypal().listDisputes();
-    await expect(analyzeDispute(d, { client: fakeClient([[], []]) as any })).rejects.toThrow("without a recommendation");
+    await expect(analyzeDispute(d, { model: claudeModel({ client: fakeClient([[], []]) as any }) })).rejects.toThrow("without a recommendation");
   });
 });

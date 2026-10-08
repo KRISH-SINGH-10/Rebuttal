@@ -64,22 +64,33 @@ export default function CaseView({ id }: { id: string }) {
   }, [id, adopt]);
 
   useEffect(() => {
+    // A superseded load (the page re-mounting, or a newer id) must not touch the page.
+    let cancelled = false;
     (async () => {
-      const res = await fetch(`/api/cases/${id}`, { cache: "no-store" });
-      if (!res.ok) {
-        // A case filed a moment ago may not be loaded yet; syncing the inbox picks it up.
-        await fetch("/api/cases", { cache: "no-store" });
-        const again = await fetch(`/api/cases/${id}`, { cache: "no-store" });
-        if (!again.ok) return setError("Dispute not found.");
-        return adopt(await again.json());
+      let rec: CaseRecord | null = null;
+      // The server can be missing the case for a moment: a freshly filed dispute, or a
+      // server that just woke up or redeployed with empty memory. Syncing the inbox
+      // reloads it, so retry a few times before calling the dispute missing.
+      for (let attempt = 0; attempt < 4 && !rec && !cancelled; attempt++) {
+        if (attempt > 0) {
+          await fetch("/api/cases", { cache: "no-store" }).catch(() => null);
+          await new Promise((r) => setTimeout(r, 400 * attempt));
+        }
+        const res = await fetch(`/api/cases/${id}`, { cache: "no-store" }).catch(() => null);
+        if (res?.ok) rec = await res.json();
       }
-      const rec: CaseRecord = await res.json();
+      if (cancelled) return;
+      if (!rec) return setError("Dispute not found.");
+      setError(null);
       adopt(rec);
       if (rec.status === "NEW" && !started.current) {
         started.current = true;
         analyze();
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [id, adopt, analyze]);
 
   async function post(path: string, body: unknown, label: string) {

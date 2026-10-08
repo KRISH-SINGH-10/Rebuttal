@@ -12,7 +12,7 @@ The seller reviews the recommendation, edits it if they want, and approves it. O
 
 Built for the [Build What's Next with PayPal and AI](https://paypalaihackathon.devpost.com/) hackathon.
 
-**Live demo:** https://rebuttal.onrender.com _(placeholder until deployed; the free instance sleeps, so the first load can take about a minute)_
+**Live demo:** https://rebuttal-6j9a.onrender.com _(free instance: if it has been idle, the first load takes about a minute)_
 
 ## Try it (no PayPal login needed)
 

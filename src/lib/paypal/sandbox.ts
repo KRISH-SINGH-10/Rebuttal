@@ -161,7 +161,14 @@ export function sandboxGateway(clientId: string, clientSecret: string): PayPalGa
         // The toolkit's tool also sends its arguments as query parameters; if PayPal
         // rejects that, make the same call directly.
         console.warn("accept_dispute_claim via Agent Toolkit failed, retrying over REST:", e instanceof Error ? e.message : e);
-        await call("POST", `/v1/customer/disputes/${id}/accept-claim`, { note, accept_claim_type: "REFUND" });
+        try {
+          await call("POST", `/v1/customer/disputes/${id}/accept-claim`, { note, accept_claim_type: "REFUND" });
+        } catch (rest) {
+          if (/INSUFFICIENT_FUNDS/.test(rest instanceof Error ? rest.message : "")) {
+            throw new Error("PayPal refused the refund: the seller's PayPal balance is too low to cover it. Add funds to the account, then approve again.");
+          }
+          throw rest;
+        }
       }
     },
 

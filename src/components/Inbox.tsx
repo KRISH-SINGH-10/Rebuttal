@@ -1,36 +1,58 @@
 "use client";
 
-import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef, type ICellRendererParams } from "ag-grid-community";
+import type { ColDef, GridApi, ICellRendererParams } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CaseRecord } from "@/lib/types";
 import { daysLeft, DECISION_COLOR, DECISION_LABEL, money, REASON_LABEL, statusLabel } from "./format";
-
-ModuleRegistry.registerModules([AllCommunityModule]);
+import { gridTheme } from "./grid";
 
 type Stats = { open: number; at_risk: number; kept: number; won: number; decided: number };
 type Payload = { mode: "mock" | "sandbox"; sandboxAvailable?: boolean; cases: CaseRecord[]; stats: Stats };
 
-// Grid theme built from the app's CSS variables so it follows light and dark mode.
-const gridTheme = themeQuartz.withParams({
-  backgroundColor: "var(--panel)",
-  foregroundColor: "var(--ink)",
-  borderColor: "var(--line)",
-  headerBackgroundColor: "var(--bg)",
-  headerTextColor: "var(--muted)",
-  accentColor: "var(--accent)",
-  rowHoverColor: "var(--accent-soft)",
-  fontFamily: "inherit",
-  fontSize: 14,
-  headerFontSize: 12,
-  headerFontWeight: 600,
-  rowHeight: 64,
-  wrapperBorderRadius: 10,
-  spacing: 7,
-});
+// The pinned bottom row carries totals for whatever rows the search and filters leave visible.
+type Totals = { count: number; atRisk: number; kept: number; refunded: number };
+type Row = CaseRecord & { totals?: Totals };
 
-function BuyerCell({ data }: ICellRendererParams<CaseRecord>) {
+const STAGE_LABEL: Record<string, string> = { INQUIRY: "Inquiry", CHARGEBACK: "Chargeback", PRE_ARBITRATION: "Pre-arbitration", ARBITRATION: "Arbitration" };
+const stageOf = (c?: CaseRecord) => (c?.dispute ? STAGE_LABEL[c.dispute.dispute_life_cycle_stage] ?? c.dispute.dispute_life_cycle_stage : undefined);
+
+function totalsOf(rows: CaseRecord[]): Totals {
+  const amt = (c: CaseRecord) => Number(c.dispute.dispute_amount.value);
+  return {
+    count: rows.length,
+    atRisk: rows.filter((c) => !c.outcome).reduce((s, c) => s + amt(c), 0),
+    kept: rows.reduce((s, c) => s + (c.outcome?.amount_kept ?? 0), 0),
+    refunded: rows.reduce((s, c) => s + (c.outcome?.amount_lost ?? 0), 0),
+  };
+}
+
+function TotalsLabel({ data }: ICellRendererParams<Row>) {
+  return <span className="font-semibold">{data?.totals?.count ?? 0} shown</span>;
+}
+function TotalsAmount({ data }: ICellRendererParams<Row>) {
+  return (
+    <div className="flex h-full flex-col items-end justify-center leading-tight">
+      <span className="tabular font-semibold">{money(data?.totals?.atRisk ?? 0)}</span>
+      <span className="text-xs text-muted">at risk</span>
+    </div>
+  );
+}
+function TotalsOutcome({ data }: ICellRendererParams<Row>) {
+  const t = data?.totals;
+  return (
+    <div className="flex h-full items-center gap-4 text-sm tabular">
+      <span className="font-semibold" style={{ color: "var(--fight)" }}>{money(t?.kept ?? 0)} kept</span>
+      <span className="text-muted">{money(t?.refunded ?? 0)} refunded</span>
+    </div>
+  );
+}
+const pinned = (component: (p: ICellRendererParams<Row>) => React.ReactNode) => (p: ICellRendererParams<Row>) =>
+  p.node.rowPinned ? { component } : undefined;
+const blank = () => null;
+
+function BuyerCell({ data }: ICellRendererParams<Row>) {
   const t = data?.dispute.disputed_transactions[0];
   return (
     <div className="flex h-full flex-col justify-center leading-tight">
@@ -40,18 +62,11 @@ function BuyerCell({ data }: ICellRendererParams<CaseRecord>) {
   );
 }
 
-function ReasonCell({ data }: ICellRendererParams<CaseRecord>) {
-  if (!data) return null;
-  const stage = data.dispute.dispute_life_cycle_stage;
-  return (
-    <div className="flex h-full flex-col justify-center leading-tight">
-      <span>{REASON_LABEL[data.dispute.reason]}</span>
-      <span className="text-xs text-muted">{stage === "CHARGEBACK" ? "Chargeback" : stage === "INQUIRY" ? "Inquiry" : stage.toLowerCase()}</span>
-    </div>
-  );
+function ReasonCell({ data }: ICellRendererParams<Row>) {
+  return data?.dispute ? <span>{REASON_LABEL[data.dispute.reason]}</span> : null;
 }
 
-function DueCell({ data }: ICellRendererParams<CaseRecord>) {
+function DueCell({ data }: ICellRendererParams<Row>) {
   if (!data) return null;
   if (data.outcome || data.submitted) return <span className="text-muted">Responded</span>;
   const d = daysLeft(data.dispute.seller_response_due_date);
@@ -59,7 +74,7 @@ function DueCell({ data }: ICellRendererParams<CaseRecord>) {
   return <span className="tabular font-medium" style={{ color: d <= 3 ? "var(--danger)" : undefined }}>{d <= 0 ? "Overdue" : `${d} day${d === 1 ? "" : "s"}`}</span>;
 }
 
-function AgentCell({ data }: ICellRendererParams<CaseRecord>) {
+function AgentCell({ data }: ICellRendererParams<Row>) {
   if (!data) return null;
   const r = data.recommendation;
   const decided = data.submitted?.decision ?? r?.decision;
@@ -93,6 +108,25 @@ export default function Inbox() {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState("");
+  const [totals, setTotals] = useState<Totals | null>(null);
+  const grid = useRef<AgGridReact<Row>>(null);
+
+  const refreshTotals = useCallback((api: GridApi<Row>) => {
+    const shown: CaseRecord[] = [];
+    api.forEachNodeAfterFilter((n) => n.data && shown.push(n.data));
+    const next = totalsOf(shown);
+    // Only update on a real change, so setting the pinned row can't loop back here.
+    setTotals((cur) => (cur && JSON.stringify(cur) === JSON.stringify(next) ? cur : next));
+  }, []);
+
+  function exportCsv() {
+    grid.current?.api.exportDataAsCsv({
+      fileName: `rebuttal-outcomes-${new Date().toISOString().slice(0, 10)}.csv`,
+      columnKeys: ["id", "buyer", "claim", "stage", "amount", "decision", "status", "kept", "refunded", "win"],
+      skipPinnedBottom: true,
+    });
+  }
 
   const load = useCallback(async () => {
     const res = await fetch("/api/cases", { cache: "no-store" });
@@ -133,28 +167,82 @@ export default function Inbox() {
     load();
   }
 
-  const cols = useMemo<ColDef<CaseRecord>[]>(
+  const cols = useMemo<ColDef<Row>[]>(
     () => [
-      { headerName: "Buyer", cellRenderer: BuyerCell, flex: 1.6, minWidth: 220, valueGetter: (p) => p.data?.dispute.disputed_transactions[0]?.buyer?.name },
-      { headerName: "Claim", cellRenderer: ReasonCell, flex: 1, minWidth: 150, valueGetter: (p) => p.data && REASON_LABEL[p.data.dispute.reason] },
+      { colId: "id", headerName: "Dispute ID", hide: true, valueGetter: (p) => p.data?.id },
       {
-        headerName: "Amount",
-        flex: 0.7,
-        minWidth: 100,
-        type: "rightAligned",
-        valueGetter: (p) => Number(p.data?.dispute.dispute_amount.value),
-        valueFormatter: (p) => money(p.value),
-        cellClass: "tabular font-medium",
+        colId: "buyer",
+        headerName: "Buyer",
+        cellRenderer: BuyerCell,
+        cellRendererSelector: pinned(TotalsLabel),
+        flex: 1.6,
+        minWidth: 220,
+        valueGetter: (p) => p.data?.dispute?.disputed_transactions[0]?.buyer?.name,
+        getQuickFilterText: (p) => {
+          const t = p.data?.dispute?.disputed_transactions[0];
+          return [t?.buyer?.name, t?.items?.[0]?.item_description, t?.invoice_number, p.data?.id].filter(Boolean).join(" ");
+        },
       },
       {
+        colId: "claim",
+        headerName: "Claim",
+        cellRenderer: ReasonCell,
+        cellRendererSelector: pinned(blank),
+        flex: 0.9,
+        minWidth: 140,
+        valueGetter: (p) => p.data?.dispute && REASON_LABEL[p.data.dispute.reason],
+        filter: "agTextColumnFilter",
+        floatingFilter: true,
+      },
+      {
+        colId: "stage",
+        headerName: "Stage",
+        flex: 0.7,
+        minWidth: 120,
+        valueGetter: (p) => stageOf(p.data),
+        cellRendererSelector: pinned(blank),
+        filter: "agTextColumnFilter",
+        floatingFilter: true,
+        cellClass: "text-muted",
+      },
+      {
+        colId: "amount",
+        headerName: "Amount",
+        flex: 0.8,
+        minWidth: 120,
+        type: "rightAligned",
+        valueGetter: (p) => (p.data?.dispute ? Number(p.data.dispute.dispute_amount.value) : undefined),
+        valueFormatter: (p) => (p.value == null ? "" : money(p.value)),
+        cellRendererSelector: pinned(TotalsAmount),
+        cellClass: "tabular font-medium justify-end",
+        filter: "agNumberColumnFilter",
+        floatingFilter: true,
+      },
+      {
+        colId: "due",
         headerName: "Respond within",
         cellRenderer: DueCell,
+        cellRendererSelector: pinned(blank),
         flex: 0.8,
         minWidth: 130,
-        valueGetter: (p) => (p.data?.submitted ? 999 : daysLeft(p.data?.dispute.seller_response_due_date)),
+        valueGetter: (p) => (p.data?.submitted ? 999 : daysLeft(p.data?.dispute?.seller_response_due_date)),
         sort: "asc",
       },
-      { headerName: "Agent", cellRenderer: AgentCell, flex: 1.8, minWidth: 280, valueGetter: (p) => p.data && statusLabel(p.data) },
+      {
+        colId: "agent",
+        headerName: "Agent",
+        cellRenderer: AgentCell,
+        cellRendererSelector: pinned(TotalsOutcome),
+        flex: 1.8,
+        minWidth: 280,
+        valueGetter: (p) => (p.data?.dispute ? statusLabel(p.data) : undefined),
+      },
+      // Export-only columns for the outcomes CSV.
+      { colId: "decision", headerName: "Decision", hide: true, valueGetter: (p) => { const d = p.data?.submitted?.decision ?? p.data?.recommendation?.decision; return d ? DECISION_LABEL[d] : ""; } },
+      { colId: "status", headerName: "Status", hide: true, valueGetter: (p) => (p.data?.dispute ? statusLabel(p.data) : "") },
+      { colId: "kept", headerName: "Kept (USD)", hide: true, valueGetter: (p) => p.data?.outcome?.amount_kept ?? "" },
+      { colId: "refunded", headerName: "Refunded (USD)", hide: true, valueGetter: (p) => p.data?.outcome?.amount_lost ?? "" },
+      { colId: "win", headerName: "AI win estimate", hide: true, valueGetter: (p) => (p.data?.recommendation ? `${Math.round(p.data.recommendation.win_probability * 100)}%` : "") },
     ],
     [],
   );
@@ -212,14 +300,36 @@ export default function Inbox() {
         <Kpi label="Win rate" value={winRate === null ? "-" : `${winRate}%`} sub={s?.decided ? `${s.won} of ${s.decided} decided` : "No rulings yet"} />
       </div>
 
-      <div className="h-[420px]">
-        <AgGridReact<CaseRecord>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search buyer, item, claim or status"
+          aria-label="Search disputes"
+          className="w-full max-w-sm rounded-md border border-line bg-panel px-3 py-2 text-sm"
+        />
+        <button onClick={exportCsv} disabled={!data?.cases.length} className="rounded-md border border-line px-3 py-2 text-sm disabled:opacity-50">
+          Export outcomes (CSV)
+        </button>
+      </div>
+
+      <div className="h-[480px]">
+        <AgGridReact<Row>
+          ref={grid}
           theme={gridTheme}
+          rowHeight={64}
           rowData={data?.cases ?? []}
           columnDefs={cols}
+          quickFilterText={search}
+          // The id changes with the numbers so AG Grid redraws the pinned row.
+          pinnedBottomRowData={totals ? [{ id: `totals-${JSON.stringify(totals)}`, totals } as Row] : []}
           getRowId={(p) => p.data.id}
-          onRowClicked={(e) => e.data && router.push(`/cases/${e.data.id}`)}
-          rowClass="cursor-pointer"
+          onRowClicked={(e) => e.data && !e.node.rowPinned && router.push(`/cases/${e.data.id}`)}
+          getRowClass={(p) => (p.node.rowPinned ? "font-medium" : "cursor-pointer")}
+          defaultColDef={{ cellStyle: { display: "flex", alignItems: "center" } }}
+          onRowDataUpdated={(e) => refreshTotals(e.api)}
+          onFilterChanged={(e) => refreshTotals(e.api)}
           overlayNoRowsTemplate="No disputes. File a test dispute to try the flow."
           suppressCellFocus
         />

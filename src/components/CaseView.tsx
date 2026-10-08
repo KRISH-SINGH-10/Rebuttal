@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CaseRecord, Decision, TraceStep } from "@/lib/types";
+import EvidenceGrid from "./EvidenceGrid";
 import { daysLeft, DECISION_COLOR, DECISION_LABEL, money, REASON_LABEL, statusLabel } from "./format";
 
 const TOOL_LABEL: Record<string, string> = {
@@ -171,15 +172,8 @@ export default function CaseView({ id }: { id: string }) {
               <p className="text-sm text-muted">{r.rationale}</p>
               {r.evidence.length ? (
                 <div>
-                  <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Evidence found</h3>
-                  <ul className="space-y-2">
-                    {r.evidence.map((e, i) => (
-                      <li key={i} className="rounded-md border border-line px-3 py-2 text-sm">
-                        <div>{e.summary}</div>
-                        <div className="text-xs text-muted">{e.type.replaceAll("_", " ").toLowerCase()} &middot; from {TOOL_LABEL[e.source] ?? e.source}</div>
-                      </li>
-                    ))}
-                  </ul>
+                  <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Evidence trail</h3>
+                  <EvidenceGrid evidence={r.evidence} toolLabel={TOOL_LABEL} />
                 </div>
               ) : null}
               {r.risks.length ? (

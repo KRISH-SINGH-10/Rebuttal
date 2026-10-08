@@ -3,14 +3,19 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { outcomeFor } from "./actions";
 import { paypal } from "./paypal";
 import type { CaseRecord, CaseStatus, Dispute } from "./types";
 
 const FILE = path.join(process.cwd(), "data", "cases.json");
-const g = globalThis as unknown as { __rebuttalCases?: Map<string, CaseRecord> };
+// One case map per PayPal mode, so switching between simulator and sandbox keeps both.
+const g = globalThis as unknown as { __rebuttalCases?: Partial<Record<"mock" | "sandbox", Map<string, CaseRecord>>> };
 
 function load(): Map<string, CaseRecord> {
-  if (g.__rebuttalCases) return g.__rebuttalCases;
+  const mode = paypal().mode;
+  g.__rebuttalCases ??= {};
+  const existing = g.__rebuttalCases[mode];
+  if (existing) return existing;
   let map = new Map<string, CaseRecord>();
   // Mock disputes live in memory only, so a persisted mock case file would point at
   // disputes that no longer exist after a restart.
@@ -21,7 +26,7 @@ function load(): Map<string, CaseRecord> {
       // first run
     }
   }
-  g.__rebuttalCases = map;
+  g.__rebuttalCases[mode] = map;
   return map;
 }
 
@@ -37,6 +42,12 @@ export function upsertFromDispute(d: Dispute): CaseRecord {
   const rec: CaseRecord = existing
     ? { ...existing, dispute: d, updated_at: new Date().toISOString() }
     : { id: d.dispute_id, dispute: d, status: "NEW", trace: [], updated_at: new Date().toISOString() };
+  // PayPal may close a dispute outside the app (a ruling, or a dispute decided before this
+  // server started); show that result instead of offering to investigate a closed case.
+  if (!rec.outcome && d.dispute_outcome?.outcome_code) {
+    const o = outcomeFor(d, rec.submitted?.decision);
+    if (o) Object.assign(rec, { outcome: o, status: o.result });
+  }
   map.set(rec.id, rec);
   persist();
   return rec;
@@ -67,7 +78,7 @@ export function updateCase(id: string, patch: Partial<CaseRecord> & { status?: C
 }
 
 export function resetCases() {
-  g.__rebuttalCases = new Map();
+  g.__rebuttalCases = { ...g.__rebuttalCases, [paypal().mode]: new Map() };
   persist();
 }
 

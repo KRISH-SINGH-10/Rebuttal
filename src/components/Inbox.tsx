@@ -10,7 +10,7 @@ import { daysLeft, DECISION_COLOR, DECISION_LABEL, money, REASON_LABEL, statusLa
 ModuleRegistry.registerModules([AllCommunityModule]);
 
 type Stats = { open: number; at_risk: number; kept: number; won: number; decided: number };
-type Payload = { mode: "mock" | "sandbox"; cases: CaseRecord[]; stats: Stats };
+type Payload = { mode: "mock" | "sandbox"; sandboxAvailable?: boolean; cases: CaseRecord[]; stats: Stats };
 
 // Grid theme built from the app's CSS variables so it follows light and dark mode.
 const gridTheme = themeQuartz.withParams({
@@ -119,6 +119,15 @@ export default function Inbox() {
     router.push(`/cases/${json.id}`);
   }
 
+  async function switchMode(mode: "mock" | "sandbox") {
+    if (mode === data?.mode) return;
+    const res = await fetch("/api/mode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
+    const json = await res.json();
+    if (!res.ok) return setError(json.error);
+    setData(null);
+    load();
+  }
+
   async function reset() {
     await fetch("/api/demo/reset", { method: "POST" });
     load();
@@ -161,6 +170,20 @@ export default function Inbox() {
           <p className="text-sm text-muted">The agent investigates each dispute and recommends a response. Nothing is sent to PayPal until you approve it.</p>
         </div>
         <div className="flex items-center gap-2">
+          {data?.sandboxAvailable ? (
+            <div className="flex rounded-md border border-line p-0.5 text-sm" role="group" aria-label="PayPal mode">
+              {(["mock", "sandbox"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => switchMode(m)}
+                  aria-pressed={data.mode === m}
+                  className={`rounded px-3 py-1.5 ${data.mode === m ? "bg-accent font-semibold text-panel" : "text-muted hover:text-ink"}`}
+                >
+                  {m === "mock" ? "Simulator" : "Live PayPal sandbox"}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {data?.mode === "mock" ? (
             <button onClick={reset} className="rounded-md px-3 py-2 text-sm text-muted hover:text-ink">Reset demo</button>
           ) : null}
@@ -172,7 +195,12 @@ export default function Inbox() {
 
       {data?.mode === "mock" ? (
         <p className="rounded-md border border-line bg-panel px-3 py-2 text-sm text-muted">
-          Demo mode: PayPal is simulated in memory. Set sandbox credentials to run against the PayPal sandbox.
+          Simulator: PayPal is simulated in memory, so every step works, including offers, refunds and PayPal&apos;s ruling. The AI investigations are real Gemini runs, replayed from a saved copy to stay within the free tier (Re-run calls the model live).
+          {data.sandboxAvailable ? " Switch to Live PayPal sandbox to see real sandbox disputes." : " Set sandbox credentials to run against the PayPal sandbox."}
+        </p>
+      ) : data?.mode === "sandbox" ? (
+        <p className="rounded-md border border-line bg-panel px-3 py-2 text-sm text-muted">
+          Live PayPal sandbox: disputes come from real sandbox buyers through the PayPal Agent Toolkit. The sandbox opens every dispute as a chargeback, where PayPal allows no offers, and refunds need a seller balance, so use the Simulator for those steps.
         </p>
       ) : null}
       {error ? <p className="rounded-md border border-danger px-3 py-2 text-sm text-danger">{error}</p> : null}

@@ -12,6 +12,24 @@ The seller reviews the recommendation, edits it if they want, and approves it. O
 
 Built for the [Build What's Next with PayPal and AI](https://paypalaihackathon.devpost.com/) hackathon.
 
+**Live demo:** https://rebuttal.onrender.com _(placeholder until deployed; the free instance sleeps, so the first load can take about a minute)_
+
+## Try it (no PayPal login needed)
+
+The demo opens on the **Simulator**. Open a dispute, click **Investigate** to watch the agent work, approve its recommendation, then pick **PayPal rules for seller** (or for buyer) to simulate the ruling. **File a test dispute** adds a new case, and **Reset demo** starts over. The toggle at the top switches to **Live PayPal sandbox**, which shows real disputes filed by sandbox buyers.
+
+### Simulator vs live sandbox
+
+| Step | Simulator | Live PayPal sandbox |
+|---|---|---|
+| AI investigation | Real Gemini runs, replayed from `cache/investigations/` so the free tier's rate limit never stalls a demo. **Re-run** calls the model live. | Live Gemini run against the real dispute through the PayPal Agent Toolkit. |
+| Fight: evidence + tracking | Works | Works (verified: evidence accepted, tracking added). |
+| PayPal's ruling (sandbox `adjudicate`) | Works | Works (verified: a $184 "not received" claim ruled for the seller, hold released). |
+| Partial-refund offer | Works | Not possible in our tests: the sandbox opened every buyer dispute as a chargeback, and PayPal allows no offers on chargebacks. The app says so instead of failing silently. |
+| Full refund | Works | Works when the seller account has a balance; our India-based sandbox seller had no USD balance, so PayPal returned `INSUFFICIENT_FUNDS`, which the app reports. |
+
+Why both: buyer disputes can only be filed by hand in the sandbox and take minutes to hours to appear, so a judge can't create one on the spot. The simulator returns the same JSON shapes as the sandbox, so the same code paths, UI and agent run in both.
+
 ## How it uses PayPal
 
 | PayPal capability | Used for |
@@ -20,7 +38,9 @@ Built for the [Build What's Next with PayPal and AI](https://paypalaihackathon.d
 | Agent Toolkit: `list_disputes`, `get_dispute` | The dispute inbox. |
 | Agent Toolkit: `create_shipment_tracking` | Before fighting, adds the carrier tracking to the PayPal transaction if the seller never uploaded it. |
 | Agent Toolkit: `accept_dispute_claim` | Refunds when the seller agrees the case isn't worth fighting. |
-| Disputes API: `provide-evidence` | Sends the approved statement, evidence types and carrier tracking. |
+| Disputes API: `provide-evidence` | Sends the approved statement with the response attached as a PDF. The live sandbox accepted one evidence per call, so the strongest type goes first. |
+| Disputes API: `provide-supporting-info` | Sends the statement while a chargeback is under PayPal review. |
+| Orders API: `/v2/checkout/orders/{id}/track` | Adds carrier tracking when the app lacks the older trackers permission. |
 | Disputes API: `make-offer` | Sends an approved partial refund. |
 | Disputes API (sandbox): `adjudicate` | Simulates PayPal's ruling, so the full lifecycle runs end-to-end in a demo. |
 | Webhooks: `CUSTOMER.DISPUTE.*` + `verify-webhook-signature` | New disputes are pulled in and analyzed automatically. |
@@ -55,9 +75,10 @@ To use the real PayPal sandbox, set `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET
 
 Disputes are filed by buyers. To create one in the sandbox:
 
-1. In the developer dashboard, open **Testing Tools > Sandbox Accounts** and find the personal (buyer) account.
-2. Log in at sandbox.paypal.com as that buyer and pay the business account. Use the buyer's card so the payment is eligible for a dispute.
-3. From the buyer's activity page, report a problem with the payment. The dispute shows up in Rebuttal on the next refresh, or right away if webhooks are set up.
+1. `npm run seed:sandbox create JK-1042` creates a real sandbox order that matches the demo shop's records and prints a checkout link.
+2. Open the link and pay as a sandbox **personal** account. Use a US personal account: an India buyer can't pay an India seller.
+3. `npm run seed:sandbox capture --wait` captures the payment and adds the carrier tracking.
+4. As the same buyer, open Activity at sandbox.paypal.com, pick the payment and report a problem. The dispute appears in Rebuttal once PayPal's API lists it (in our tests, from a few minutes up to a few hours).
 
 Disputes over $11 escalate on day 11 in the sandbox; see PayPal's [dispute testing guide](https://developer.paypal.com/disputes/test-go-live).
 
@@ -67,7 +88,7 @@ In the sandbox app, add a webhook to `https://<your-host>/api/webhooks/paypal` f
 
 ## Deploy
 
-`render.yaml` deploys the app as a Render web service. Set the environment variables from `.env.example` in the Render dashboard.
+`render.yaml` is a Render Blueprint for a free web service: `npm ci && npm run build`, `npm start` (binds to `$PORT`), health check `/api/health`, starting on the simulator (`PAYPAL_MODE=mock`). In Render choose **New > Blueprint**, pick this repository and paste `GEMINI_API_KEY`, `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` when asked. Without the PayPal keys the app runs on the simulator only.
 
 ## Tests
 

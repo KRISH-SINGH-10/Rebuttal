@@ -1,26 +1,27 @@
+# Render Blueprint: New > Blueprint, pick this repo, then paste the three keys when asked.
 services:
   - type: web
     name: rebuttal
     runtime: node
     plan: free
     buildCommand: npm ci && npm run build
-    startCommand: npm start
+    startCommand: npm start # binds to $PORT (see package.json)
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
         value: "22"
+      # Opens on the simulator so judges can try every step; the inbox switches to the
+      # live PayPal sandbox when the PayPal keys below are set.
+      - key: PAYPAL_MODE
+        value: mock
       - key: GEMINI_API_KEY
-        sync: false
-      - key: GEMINI_MODEL
-        sync: false
-      - key: AI_PROVIDER
-        sync: false
-      - key: APP_ANTHROPIC_API_KEY
         sync: false
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET
         sync: false
-      - key: PAYPAL_WEBHOOK_ID
+      # Optional
+      - key: GEMINI_MODEL
         sync: false
-      - key: PAYPAL_MODE
+      - key: PAYPAL_WEBHOOK_ID
         sync: false

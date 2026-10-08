@@ -6,16 +6,20 @@ import { claudeModel } from "./model";
 import { RateLimitError } from "./model/gemini";
 import { paypal } from "./paypal";
 import type { CaseRecord, TraceStep } from "./types";
+import { READ_ONLY_MESSAGE, visitor } from "./visitor";
 
 const running = new Set<string>();
 const REPLAY_STEP_MS = 450;
 
-export async function runAnalysis(caseId: string, onStep?: (s: TraceStep) => void, opts: { fresh?: boolean } = {}): Promise<CaseRecord> {
+export async function runAnalysis(caseId: string, onStep?: (s: TraceStep) => void, opts: { fresh?: boolean; savedOnly?: boolean } = {}): Promise<CaseRecord> {
   const c = getCase(caseId);
   if (!c) throw new Error(`Unknown case ${caseId}`);
   if (c.submitted) throw new Error("This dispute already has a response.");
-  if (running.has(caseId)) throw new Error("Analysis is already running for this dispute.");
-  running.add(caseId);
+  if (opts.savedOnly && (opts.fresh || !loadInvestigation(c.dispute))) throw new Error(READ_ONLY_MESSAGE);
+  // Simulator dispute IDs repeat across visitors, so the lock is per visitor and mode.
+  const lock = `${visitor().mode === "mock" ? visitor().id : "sandbox"}:${caseId}`;
+  if (running.has(lock)) throw new Error("Analysis is already running for this dispute.");
+  running.add(lock);
   try {
     const dispute = await paypal().getDispute(caseId);
     updateCase(caseId, { dispute, status: "ANALYZING", trace: [], recommendation: undefined, error: undefined });
@@ -48,7 +52,7 @@ export async function runAnalysis(caseId: string, onStep?: (s: TraceStep) => voi
     updateCase(caseId, { status: "ERROR", error });
     throw e;
   } finally {
-    running.delete(caseId);
+    running.delete(lock);
   }
 }
 

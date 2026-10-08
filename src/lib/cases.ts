@@ -6,28 +6,28 @@ import path from "node:path";
 import { outcomeFor } from "./actions";
 import { paypal } from "./paypal";
 import type { CaseRecord, CaseStatus, Dispute } from "./types";
+import { lruGet, visitor } from "./visitor";
 
 const FILE = path.join(process.cwd(), "data", "cases.json");
-// One case map per PayPal mode, so switching between simulator and sandbox keeps both.
-const g = globalThis as unknown as { __rebuttalCases?: Partial<Record<"mock" | "sandbox", Map<string, CaseRecord>>> };
+// Simulator cases belong to each visitor, like the simulated disputes behind them; the
+// live sandbox is one real PayPal account, so its cases are shared.
+const g = globalThis as unknown as { __rebuttalCases?: { sandbox?: Map<string, CaseRecord>; mock: Map<string, Map<string, CaseRecord>> } };
 
 function load(): Map<string, CaseRecord> {
-  const mode = paypal().mode;
-  g.__rebuttalCases ??= {};
-  const existing = g.__rebuttalCases[mode];
-  if (existing) return existing;
-  let map = new Map<string, CaseRecord>();
+  g.__rebuttalCases ??= { mock: new Map() };
+  const store = g.__rebuttalCases;
   // Mock disputes live in memory only, so a persisted mock case file would point at
   // disputes that no longer exist after a restart.
-  if (paypal().mode === "sandbox") {
+  if (paypal().mode === "mock") return lruGet(store.mock, visitor().id, () => new Map());
+  if (!store.sandbox) {
+    store.sandbox = new Map();
     try {
-      map = new Map((JSON.parse(fs.readFileSync(FILE, "utf8")) as CaseRecord[]).map((c) => [c.id, c]));
+      store.sandbox = new Map((JSON.parse(fs.readFileSync(FILE, "utf8")) as CaseRecord[]).map((c) => [c.id, c]));
     } catch {
       // first run
     }
   }
-  g.__rebuttalCases[mode] = map;
-  return map;
+  return store.sandbox;
 }
 
 function persist() {
@@ -78,7 +78,8 @@ export function updateCase(id: string, patch: Partial<CaseRecord> & { status?: C
 }
 
 export function resetCases() {
-  g.__rebuttalCases = { ...g.__rebuttalCases, [paypal().mode]: new Map() };
+  if (paypal().mode === "mock") g.__rebuttalCases?.mock.delete(visitor().id);
+  else if (g.__rebuttalCases) g.__rebuttalCases.sandbox = new Map();
   persist();
 }
 

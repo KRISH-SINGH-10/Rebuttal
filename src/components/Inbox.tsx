@@ -9,7 +9,7 @@ import { daysLeft, DECISION_COLOR, DECISION_LABEL, money, REASON_LABEL, statusLa
 import { gridTheme } from "./grid";
 
 type Stats = { open: number; at_risk: number; kept: number; won: number; decided: number };
-type Payload = { mode: "mock" | "sandbox"; sandboxAvailable?: boolean; cases: CaseRecord[]; stats: Stats };
+type Payload = { mode: "mock" | "sandbox"; sandboxAvailable?: boolean; viewOnly?: boolean; cases: CaseRecord[]; stats: Stats };
 
 // The pinned bottom row carries totals for whatever rows the search and filters leave visible.
 type Totals = { count: number; atRisk: number; kept: number; refunded: number };
@@ -295,12 +295,13 @@ export default function Inbox() {
 
       {data?.mode === "mock" ? (
         <p className="rounded-md border border-line bg-panel px-3 py-2 text-sm text-muted">
-          Simulator: PayPal is simulated in memory, so every step works, including offers, refunds and PayPal&apos;s ruling. The AI investigations are real Gemini runs, replayed from a saved copy to stay within the free tier (Re-run calls the model live).
+          Simulator: your own private copy of the demo, so other visitors don&apos;t see your clicks and Reset demo only resets yours. PayPal is simulated in memory, so every step works, including offers, refunds and PayPal&apos;s ruling. The AI investigations are real Gemini runs, replayed from a saved copy to stay within the free tier (Re-run calls the model live).
           {data.sandboxAvailable ? " Switch to Live PayPal sandbox to see real sandbox disputes." : " Set sandbox credentials to run against the PayPal sandbox."}
         </p>
       ) : data?.mode === "sandbox" ? (
         <p className="rounded-md border border-line bg-panel px-3 py-2 text-sm text-muted">
           Live PayPal sandbox: disputes come from real sandbox buyers through the PayPal Agent Toolkit. The sandbox opens every dispute as a chargeback, where PayPal allows no offers, and refunds need a seller balance, so use the Simulator for those steps.
+          {data.viewOnly ? " On the hosted demo the live sandbox is view-only, because every visitor shares the same PayPal account." : ""}
         </p>
       ) : null}
       {error ? <p className="rounded-md border border-danger px-3 py-2 text-sm text-danger">{error}</p> : null}

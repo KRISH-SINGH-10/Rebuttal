@@ -24,6 +24,7 @@ export default function CaseView({ id }: { id: string }) {
   const [offer, setOffer] = useState("");
   const started = useRef(false);
   const [simulator, setSimulator] = useState(false);
+  const [viewOnly, setViewOnly] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const sentPanel = useRef<HTMLDivElement>(null);
   const banner = useRef<HTMLDivElement>(null);
@@ -106,7 +107,10 @@ export default function CaseView({ id }: { id: string }) {
   useEffect(() => {
     fetch("/api/mode", { cache: "no-store" })
       .then((r) => r.json())
-      .then((m) => setSimulator(m.mode === "mock"))
+      .then((m) => {
+        setSimulator(m.mode === "mock");
+        setViewOnly(Boolean(m.viewOnly));
+      })
       .catch(() => {});
   }, []);
 
@@ -181,7 +185,7 @@ export default function CaseView({ id }: { id: string }) {
           <Panel
             title="Agent investigation"
             action={
-              !c.submitted ? (
+              !c.submitted && !(viewOnly && c.status !== "NEW") ? (
                 <button onClick={() => analyze(c.status !== "NEW")} disabled={busy !== null} className="text-sm text-accent disabled:opacity-50">
                   {busy === "analyze" ? "Investigating..." : c.status === "NEW" ? "Investigate" : "Re-run"}
                 </button>
@@ -235,7 +239,15 @@ export default function CaseView({ id }: { id: string }) {
             </Panel>
           ) : null}
 
-          {r && !c.submitted ? (
+          {r && !c.submitted && !c.outcome && viewOnly ? (
+            <Panel title="Your response">
+              <p className="text-sm text-muted">
+                The live PayPal sandbox is view-only on the hosted demo, so visitors can&apos;t change it for each other. Switch to the Simulator from the inbox to approve, send offers and see PayPal&apos;s ruling.
+              </p>
+            </Panel>
+          ) : null}
+
+          {r && !c.submitted && !c.outcome && !viewOnly ? (
             <Panel title="Your response">
               <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Decision">
                 {(["FIGHT", "OFFER", "REFUND"] as Decision[]).map((x) => (
@@ -284,7 +296,7 @@ export default function CaseView({ id }: { id: string }) {
                 {c.submitted.offer_amount ? ` of ${money(c.submitted.offer_amount)}` : ""} &middot; {new Date(c.submitted.at).toLocaleString()}
               </p>
               <p className="whitespace-pre-wrap rounded-md bg-bg p-3 text-sm text-muted">{c.submitted.response}</p>
-              {!c.outcome ? (
+              {!c.outcome && !viewOnly ? (
                 <div className="space-y-2 rounded-md border border-accent bg-accent-soft p-3">
                   <p className="text-sm font-medium">
                     {busy === "ruling"

@@ -6,6 +6,7 @@ import { SCENARIOS, SHOP, type Scenario } from "../demo/scenarios";
 import type { Dispute } from "../types";
 import type { EvidenceSubmission, PayPalGateway } from "./gateway";
 import { sharedToolDefs } from "./toolkit";
+import { lruGet, visitor } from "../visitor";
 
 type MockRow = {
   scenario: Scenario;
@@ -18,7 +19,8 @@ type MockRow = {
 
 type MockState = { rows: Map<string, MockRow>; nextSeq: number; filed: Set<string> };
 
-const g = globalThis as unknown as { __rebuttalMock?: MockState };
+// One simulator per visitor, so judges trying the demo at the same time don't see each other's clicks.
+const g = globalThis as unknown as { __rebuttalMock?: Map<string, MockState> };
 
 function id(prefix: string, seed: number, len: number) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789";
@@ -106,13 +108,13 @@ function build(s: Scenario, seq: number): MockRow {
 }
 
 function state(): MockState {
-  if (!g.__rebuttalMock) {
+  g.__rebuttalMock ??= new Map();
+  return lruGet(g.__rebuttalMock, visitor().id, () => {
     const st: MockState = { rows: new Map(), nextSeq: 0, filed: new Set() };
     // Start with three disputes in the inbox; the fourth is filed live in the demo.
     for (const s of SCENARIOS.slice(0, 3)) addScenario(st, s);
-    g.__rebuttalMock = st;
-  }
-  return g.__rebuttalMock;
+    return st;
+  });
 }
 
 function addScenario(st: MockState, s: Scenario) {
@@ -133,7 +135,7 @@ function touch(r: MockRow, patch: Partial<Dispute>) {
 }
 
 export function resetMock() {
-  delete g.__rebuttalMock;
+  g.__rebuttalMock?.delete(visitor().id);
 }
 
 export const mockGateway: PayPalGateway = {

@@ -18,6 +18,8 @@ Built for the [Build What's Next with PayPal and AI](https://paypalaihackathon.d
 
 The demo opens on the **Simulator**. Open a dispute and the agent starts investigating (a saved real Gemini run, replayed). Approve its recommendation, and a few seconds later the simulator plays PayPal's side: the ruling on a fight, or the buyer accepting an offer. Click **PayPal rules for buyer** during the countdown to see a loss instead. **File a test dispute** adds a new case, and **Reset demo** starts over. In the inbox, search or filter by claim, stage and amount; the pinned totals row tracks money at risk and kept for whatever is shown, and **Export outcomes (CSV)** downloads the ledger with plain-number amounts. The toggle at the top switches to **Live PayPal sandbox**, which shows real disputes filed by sandbox buyers.
 
+Each browser gets its own simulator, kept by a cookie: several judges can try the demo at once without seeing each other's clicks, and **Reset demo** resets only yours. The live sandbox is one shared PayPal account, so on a production server it is view-only (cases, saved investigations and outcomes); set `LIVE_SANDBOX_WRITABLE=1` to approve and rule on live disputes, as local development does by default.
+
 ### Simulator vs live sandbox
 
 | Step | Simulator | Live PayPal sandbox |

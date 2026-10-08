@@ -23,6 +23,11 @@ export default function CaseView({ id }: { id: string }) {
   const [response, setResponse] = useState("");
   const [offer, setOffer] = useState("");
   const started = useRef(false);
+  const [simulator, setSimulator] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const sentPanel = useRef<HTMLDivElement>(null);
+  const banner = useRef<HTMLDivElement>(null);
+  const wasAwaiting = useRef(false);
 
   const adopt = useCallback((rec: CaseRecord) => {
     setC(rec);
@@ -87,6 +92,40 @@ export default function CaseView({ id }: { id: string }) {
     adopt(json);
   }
 
+  useEffect(() => {
+    fetch("/api/mode", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((m) => setSimulator(m.mode === "mock"))
+      .catch(() => {});
+  }, []);
+
+  // In the simulator, PayPal's side plays itself: a few seconds after the seller approves,
+  // the buyer accepts the offer or PayPal rules, so every run reaches an end state.
+  const awaiting = Boolean(c?.submitted && !c.outcome);
+  useEffect(() => {
+    const ended = wasAwaiting.current && !awaiting;
+    wasAwaiting.current = awaiting;
+    if (!awaiting) {
+      setCountdown(null);
+      // Bring the result into view; the seller is usually scrolled down at the approve button.
+      if (ended || c?.submitted) banner.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    sentPanel.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (!simulator) return;
+    setCountdown(SIMULATED_REVIEW_SECONDS);
+  }, [awaiting, simulator]);
+  useEffect(() => {
+    if (countdown === null || busy) return;
+    if (countdown <= 0) {
+      setCountdown(null);
+      post("ruling", { outcome: "SELLER_FAVOR" }, "ruling");
+      return;
+    }
+    const t = setTimeout(() => setCountdown((n) => (n === null ? null : n - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [countdown, busy]);
+
   if (!c) return <p className="text-muted">{error ?? "Loading..."}</p>;
 
   const d = c.dispute;
@@ -118,7 +157,7 @@ export default function CaseView({ id }: { id: string }) {
 
       {error ? <p className="rounded-md border border-danger px-3 py-2 text-sm text-danger">{error}</p> : null}
 
-      {c.outcome ? <OutcomeBanner c={c} /> : null}
+      {c.outcome ? <div ref={banner}><OutcomeBanner c={c} /></div> : null}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
         <div className="space-y-6">
@@ -227,6 +266,7 @@ export default function CaseView({ id }: { id: string }) {
           ) : null}
 
           {c.submitted ? (
+            <div ref={sentPanel}>
             <Panel title="Sent to PayPal">
               <p className="text-sm">
                 {DECISION_LABEL[c.submitted.decision]}
@@ -234,16 +274,20 @@ export default function CaseView({ id }: { id: string }) {
               </p>
               <p className="whitespace-pre-wrap rounded-md bg-bg p-3 text-sm text-muted">{c.submitted.response}</p>
               {!c.outcome ? (
-                <div className="space-y-2 border-t border-line pt-3">
-                  <p className="text-sm text-muted">
-                    Sandbox: PayPal&apos;s review takes days in real life. Simulate the ruling to see the outcome.
+                <div className="space-y-2 rounded-md border border-accent bg-accent-soft p-3">
+                  <p className="text-sm font-medium">
+                    {busy === "ruling"
+                      ? "Getting PayPal's decision..."
+                      : countdown !== null
+                        ? `Simulating PayPal's side: ${c.submitted.decision === "OFFER" ? "the buyer answers your offer" : "PayPal rules"} in ${countdown}s.`
+                        : "Next: PayPal's review takes days in real life. Simulate the ruling to see the outcome."}
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    <button onClick={() => post("ruling", { outcome: "SELLER_FAVOR" }, "ruling")} disabled={busy !== null} className="rounded-md border border-line px-3 py-1.5 text-sm">
+                    <button onClick={() => { setCountdown(null); post("ruling", { outcome: "SELLER_FAVOR" }, "ruling"); }} disabled={busy !== null} className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-panel disabled:opacity-60">
                       {c.submitted.decision === "OFFER" ? "Buyer accepts offer" : "PayPal rules for seller"}
                     </button>
                     {c.submitted.decision === "FIGHT" ? (
-                      <button onClick={() => post("ruling", { outcome: "BUYER_FAVOR" }, "ruling")} disabled={busy !== null} className="rounded-md border border-line px-3 py-1.5 text-sm">
+                      <button onClick={() => { setCountdown(null); post("ruling", { outcome: "BUYER_FAVOR" }, "ruling"); }} disabled={busy !== null} className="rounded-md border border-line bg-panel px-3 py-1.5 text-sm">
                         PayPal rules for buyer
                       </button>
                     ) : null}
@@ -251,12 +295,15 @@ export default function CaseView({ id }: { id: string }) {
                 </div>
               ) : null}
             </Panel>
+            </div>
           ) : null}
         </div>
       </div>
     </div>
   );
 }
+
+const SIMULATED_REVIEW_SECONDS = 4;
 
 function OutcomeBanner({ c }: { c: CaseRecord }) {
   const o = c.outcome!;

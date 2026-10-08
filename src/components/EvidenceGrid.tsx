@@ -1,6 +1,6 @@
 "use client";
 
-import type { ColDef, ICellRendererParams } from "ag-grid-community";
+import type { CellStyle, ColDef } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
 import { useMemo } from "react";
 import type { Recommendation } from "@/lib/types";
@@ -8,16 +8,16 @@ import { gridTheme } from "./grid";
 
 type Evidence = Recommendation["evidence"][number];
 
-function FactCell({ data }: ICellRendererParams<Evidence>) {
-  return <div className="py-2 leading-snug whitespace-normal">{data?.summary}</div>;
-}
+// Wrapped text needs a normal line height (the theme uses the row height) and its own
+// padding, or AG Grid's auto row height clips multi-line facts.
+const WRAP: CellStyle = { lineHeight: "1.4", paddingTop: "10px", paddingBottom: "10px", wordBreak: "normal" };
 
 // The agent's evidence trail: each fact it relies on, what kind of PayPal evidence it is,
 // and which tool returned it, so the seller can check every claim before approving.
 export default function EvidenceGrid({ evidence, toolLabel }: { evidence: Evidence[]; toolLabel: Record<string, string> }) {
   const cols = useMemo<ColDef<Evidence>[]>(
     () => [
-      { headerName: "Fact", field: "summary", cellRenderer: FactCell, flex: 3, minWidth: 260, autoHeight: true, wrapText: true },
+      { headerName: "Fact", field: "summary", flex: 3, minWidth: 260, autoHeight: true, wrapText: true, cellStyle: WRAP },
       {
         headerName: "Evidence type",
         field: "type",
@@ -27,6 +27,7 @@ export default function EvidenceGrid({ evidence, toolLabel }: { evidence: Eviden
         cellClass: "text-muted",
         wrapText: true,
         autoHeight: true,
+        cellStyle: WRAP,
         filter: "agTextColumnFilter",
       },
       {
@@ -50,6 +51,9 @@ export default function EvidenceGrid({ evidence, toolLabel }: { evidence: Eviden
         domLayout="autoHeight"
         defaultColDef={{ sortable: true }}
         suppressCellFocus
+        // Column widths settle after the first paint; re-measure so wrapped rows aren't cut off.
+        onGridSizeChanged={(e) => e.api.resetRowHeights()}
+        onFirstDataRendered={(e) => e.api.resetRowHeights()}
       />
     </div>
   );

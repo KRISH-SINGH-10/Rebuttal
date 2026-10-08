@@ -123,7 +123,7 @@ export default function Inbox() {
   function exportCsv() {
     grid.current?.api.exportDataAsCsv({
       fileName: `rebuttal-outcomes-${new Date().toISOString().slice(0, 10)}.csv`,
-      columnKeys: ["id", "buyer", "claim", "stage", "amount", "decision", "status", "kept", "refunded", "win"],
+      columnKeys: ["id", "buyer", "claim", "stage", "amountUsd", "decision", "status", "kept", "refunded", "win"],
       skipPinnedBottom: true,
     });
   }
@@ -240,9 +240,21 @@ export default function Inbox() {
       // Export-only columns for the outcomes CSV.
       { colId: "decision", headerName: "Decision", hide: true, valueGetter: (p) => { const d = p.data?.submitted?.decision ?? p.data?.recommendation?.decision; return d ? DECISION_LABEL[d] : ""; } },
       { colId: "status", headerName: "Status", hide: true, valueGetter: (p) => (p.data?.dispute ? statusLabel(p.data) : "") },
-      { colId: "kept", headerName: "Kept (USD)", hide: true, valueGetter: (p) => p.data?.outcome?.amount_kept ?? "" },
-      { colId: "refunded", headerName: "Refunded (USD)", hide: true, valueGetter: (p) => p.data?.outcome?.amount_lost ?? "" },
-      { colId: "win", headerName: "AI win estimate", hide: true, valueGetter: (p) => (p.data?.recommendation ? `${Math.round(p.data.recommendation.win_probability * 100)}%` : "") },
+      // Export-only columns: plain numbers so the CSV adds up in a spreadsheet. Open cases count as 0 kept and 0 refunded.
+      { colId: "amountUsd", headerName: "Amount (USD)", hide: true, valueGetter: (p) => (p.data?.dispute ? Number(p.data.dispute.dispute_amount.value) : "") },
+      { colId: "kept", headerName: "Kept (USD)", hide: true, valueGetter: (p) => p.data?.outcome?.amount_kept ?? 0 },
+      { colId: "refunded", headerName: "Refunded (USD)", hide: true, valueGetter: (p) => p.data?.outcome?.amount_lost ?? 0 },
+      {
+        colId: "win",
+        headerName: "AI win estimate",
+        hide: true,
+        // A refund isn't a bet on PayPal's ruling, so it has no win estimate.
+        valueGetter: (p) => {
+          const r = p.data?.recommendation;
+          if (!r || (p.data?.submitted?.decision ?? r.decision) === "REFUND") return "";
+          return `${Math.round(r.win_probability * 100)}%`;
+        },
+      },
     ],
     [],
   );

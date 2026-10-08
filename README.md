@@ -16,7 +16,7 @@ Built for the [Build What's Next with PayPal and AI](https://paypalaihackathon.d
 
 ## Try it (no PayPal login needed)
 
-The demo opens on the **Simulator**. Open a dispute, click **Investigate** to watch the agent work, approve its recommendation, then pick **PayPal rules for seller** (or for buyer) to simulate the ruling. **File a test dispute** adds a new case, and **Reset demo** starts over. In the inbox, search or filter by claim, stage and amount; the pinned totals row tracks money at risk and kept for whatever is shown, and **Export outcomes (CSV)** downloads the ledger. The toggle at the top switches to **Live PayPal sandbox**, which shows real disputes filed by sandbox buyers.
+The demo opens on the **Simulator**. Open a dispute and the agent starts investigating (a saved real Gemini run, replayed). Approve its recommendation, and a few seconds later the simulator plays PayPal's side: the ruling on a fight, or the buyer accepting an offer. Click **PayPal rules for buyer** during the countdown to see a loss instead. **File a test dispute** adds a new case, and **Reset demo** starts over. In the inbox, search or filter by claim, stage and amount; the pinned totals row tracks money at risk and kept for whatever is shown, and **Export outcomes (CSV)** downloads the ledger with plain-number amounts. The toggle at the top switches to **Live PayPal sandbox**, which shows real disputes filed by sandbox buyers.
 
 ### Simulator vs live sandbox
 

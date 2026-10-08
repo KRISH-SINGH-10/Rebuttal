@@ -46,7 +46,19 @@ export function sandboxGateway(clientId: string, clientSecret: string): PayPalGa
       const err = out.error as { message?: string };
       throw new Error(`PayPal ${name} failed: ${err.message ?? JSON.stringify(err).slice(0, 500)}`);
     }
+    // Toolkit v1.11 reports HTTP errors as {ok:false,status,code,message} instead of
+    // `error`. Missing this once marked a refused accept-claim as refunded.
+    if (out && typeof out === "object" && out.ok === false) {
+      throw new Error(`PayPal ${name} failed (${out.status ?? "?"}): ${String(out.message ?? JSON.stringify(out)).slice(0, 500)}`);
+    }
     return out;
+  }
+
+  // PayPal lists what the seller may do next as links on the dispute; check before a
+  // write so the seller gets a plain explanation instead of a 422.
+  async function requireAction(id: string, rel: string, message: string) {
+    const d = (await toolkit("get_dispute", { dispute_id: id })) as { status?: string; links?: Array<{ rel: string }> };
+    if (!(d.links ?? []).some((l) => l.rel === rel)) throw new Error(`${message} (status ${d.status ?? "unknown"})`);
   }
 
   return {
@@ -133,6 +145,7 @@ export function sandboxGateway(clientId: string, clientSecret: string): PayPalGa
     },
 
     async makeOffer(id, offer) {
+      await requireAction(id, "make_offer", "PayPal doesn't take offers on this dispute right now. Offers are only possible before a dispute becomes a chargeback or claim under PayPal review.");
       await call("POST", `/v1/customer/disputes/${id}/make-offer`, {
         note: offer.note,
         offer_amount: { currency_code: offer.currency, value: offer.amount },
@@ -141,6 +154,7 @@ export function sandboxGateway(clientId: string, clientSecret: string): PayPalGa
     },
 
     async acceptClaim(id, note) {
+      await requireAction(id, "accept_claim", "PayPal isn't letting the seller accept this claim right now (it is under PayPal review). Try again once PayPal asks the seller to respond.");
       try {
         await toolkit("accept_dispute_claim", { dispute_id: id, note });
       } catch (e) {
